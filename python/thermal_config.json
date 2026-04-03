@@ -1,0 +1,68 @@
+{
+    "hwmon5": {
+        "name": "coretemp",
+        "path": "/sys/class/hwmon/hwmon5",
+        "temperatures": {
+            "temp3": {
+                "label": "Core 1",
+                "input_file": "/sys/class/hwmon/hwmon5/temp3_input",
+                "current_value": "67000"
+            },
+            "temp4": {
+                "label": "Core 2",
+                "input_file": "/sys/class/hwmon/hwmon5/temp4_input",
+                "current_value": "68000"
+            },
+            "temp1": {
+                "label": "Package id 0",
+                "input_file": "/sys/class/hwmon/hwmon5/temp1_input",
+                "current_value": "70000"
+            },
+            "temp5": {
+                "label": "Core 3",
+                "input_file": "/sys/class/hwmon/hwmon5/temp5_input",
+                "current_value": "63000"
+            },
+            "temp2": {
+                "label": "Core 0",
+                "input_file": "/sys/class/hwmon/hwmon5/temp2_input",
+                "current_value": "70000"
+            }
+        },
+        "pwms": {}
+    },
+    "hwmon3": {
+        "name": "pch_cannonlake",
+        "path": "/sys/class/hwmon/hwmon3",
+        "temperatures": {
+            "temp1": {
+                "label": "Unknown",
+                "input_file": "/sys/class/hwmon/hwmon3/temp1_input",
+                "current_value": "50000"
+            }
+        },
+        "pwms": {}
+    },
+    "hwmon1": {
+        "name": "acpitz",
+        "path": "/sys/class/hwmon/hwmon1",
+        "temperatures": {
+            "temp3": {
+                "label": "Unknown",
+                "input_file": "/sys/class/hwmon/hwmon1/temp3_input",
+                "current_value": "10000"
+            },
+            "temp1": {
+                "label": "Unknown",
+                "input_file": "/sys/class/hwmon/hwmon1/temp1_input",
+                "current_value": "27800"
+            },
+            "temp2": {
+                "label": "Unknown",
+                "input_file": "/sys/class/hwmon/hwmon1/temp2_input",
+                "current_value": "29800"
+            }
+        },
+        "pwms": {}
+    }
+}

@@ -1,0 +1,14 @@
+name: thermalnexus
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pytorch
+  - rust
+  - scipy
+  - pip:
+    - psutil
+    - scikit-learn
+    - nvidia-ml-py

@@ -1,0 +1,21 @@
+[Unit]
+Description=ThermalNexus Full Stack Native Orchestrator
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/media/skc/New Volume/Dev Vault/ThermNexus
+ExecStart=/bin/bash "/media/skc/New Volume/Dev Vault/ThermNexus/bash_scripts/thermalnexus-start.sh"
+
+# Safety Auto-Restart mechanisms
+Restart=always
+RestartSec=3
+
+# Logging isolation natively into journalctl
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=thermalnexus_daemon
+
+[Install]
+WantedBy=multi-user.target
