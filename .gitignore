@@ -206,3 +206,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 dashboard/release/
+
+
+dashboard/release/
+*.AppImage
+*.asar
+linux-unpacked/
