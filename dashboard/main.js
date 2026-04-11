@@ -18,8 +18,8 @@ function createWindow() {
     visualEffectState: "active",
     vibrancy: "under-window", // MacOS darkmode acrylic fallback if ported
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      nodeIntegration: false,
+      contextIsolation: true
     },
     titleBarStyle: 'hidden',
     backgroundColor: '#00000000'

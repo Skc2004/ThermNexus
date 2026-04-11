@@ -1,0 +1,39 @@
+[general]
+project_name = "ThermalNexus"
+version = "1.2.0"
+
+[paths]
+ghostlink = "/tmp/thermal_ghostlink.shm"
+database = "thermal_profile.db"
+model_weights = "python/models/thermal_predictor.pt"
+log_dir = "/tmp"
+
+[hardware]
+# "auto" = use hardware_discovery.py output
+# "mock" = use /tmp/hwmon_mock
+mode = "auto"
+config_json = "python/thermal_config.json"
+
+# Override paths (only used if mode != "auto")
+pwm_path = "/tmp/hwmon_mock/hwmon0/pwm1"
+enable_path = "/tmp/hwmon_mock/hwmon0/pwm1_enable"
+
+[control]
+watchdog_timeout_ms = 2000
+control_loop_hz = 100
+predictor_hz = 2
+profiler_hz = 1
+
+[mpc]
+target_temp = 45.0
+pwm_min = 40
+pwm_max = 255
+acoustic_penalty = 0.5
+thermal_penalty = 20.0
+
+[dashboard]
+websocket_port = 8888
+data_points = 40
+
+[python]
+conda_env = "thermalnexus"

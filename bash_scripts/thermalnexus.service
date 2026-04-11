@@ -5,17 +5,18 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/media/skc/New Volume/Dev Vault/ThermNexus
-ExecStart=/bin/bash "/media/skc/New Volume/Dev Vault/ThermNexus/bash_scripts/thermalnexus-start.sh"
+WorkingDirectory=INSTALL_DIR
+ExecStart=/bin/bash "INSTALL_DIR/bin/thermalnexus-start.sh"
+ExecStopPost=/bin/bash -c 'echo 2 > $(cat /tmp/thermalnexus/enable_path 2>/dev/null || echo /dev/null)'
 
 # Safety Auto-Restart mechanisms
 Restart=always
 RestartSec=3
 
 # Logging isolation natively into journalctl
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=thermalnexus_daemon
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=thermalnexus
 
 [Install]
 WantedBy=multi-user.target

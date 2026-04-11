@@ -9,6 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::time;
+use tracing::{info, error, warn};
+use tracing_subscriber::EnvFilter;
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -43,9 +45,13 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("thermalnexus=info".parse().unwrap()))
+        .init();
+
     let args = Args::parse();
-    println!("ThermalNexus Rust Native Daemon Booting (PID: {})", std::process::id());
-    println!("Config: GhostLink: {} | PWM: {} | Enable: {}", args.ghostlink, args.pwm, args.enable);
+    info!("ThermalNexus Rust Native Daemon Booting (PID: {})", std::process::id());
+    info!("Config: GhostLink: {} | PWM: {} | Enable: {}", args.ghostlink, args.pwm, args.enable);
 
     // 1. Thread Communication Channel
     let (tx, _rx) = broadcast::channel(32);
@@ -62,6 +68,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let enable_path = args.enable.clone();
     let ghostlink_path = args.ghostlink.clone();
 
+    let enable_for_shutdown = Arc::new(args.enable.clone());
+    let shutdown_path = Arc::clone(&enable_for_shutdown);
+
+    tokio::spawn(async move {
+        let mut sigterm = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::terminate()
+        ).unwrap();
+        
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
+        
+        info!("[SHUTDOWN] Reverting fan control to BIOS (pwm_enable=2)...");
+        write_pwm(&shutdown_path, 2);
+        std::process::exit(0);
+    });
+
     tokio::spawn(async move {
         // Build Mapped Memory integration bridge
         let ghost_link = GhostLink::new(&ghostlink_path).expect("Mmap initialization failed!");
@@ -69,25 +93,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Seize HW control to custom mode natively 
         write_pwm(&enable_path, 1);
-        println!("GhostLink Memory Pool established natively. Syscall loop firing at 100Hz.");
+        info!("GhostLink Memory Pool established natively. Syscall loop firing at 100Hz.");
         
         let mut interval = time::interval(Duration::from_millis(10)); // 100Hz Main Loop
+        let mut ticks: u64 = 0;
 
         loop {
             interval.tick().await;
+            ticks = ticks.wrapping_add(1);
 
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as i64;
             let last_heartbeat = ghost_link.get_last_heartbeat();
 
             // Extract AppState to see if React Dashboard claimed absolute Override Lock
             let mut current_applied_pwm = 0;
-            let is_ui_locked;
-            let ui_pwm;
-            {
-                let s = state_clone.lock().unwrap();
-                is_ui_locked = s.manual_override_lock;
-                ui_pwm = s.manual_pwm;
-            }
+            let (is_ui_locked, ui_pwm) = if let Ok(s) = state_clone.lock() {
+                (s.manual_override_lock, s.manual_pwm)
+            } else {
+                (false, 0)
+            };
 
             if is_ui_locked {
                 // UI 2-WAY OVERRIDE MODE: Ignore Python/Ghostlink completely
@@ -100,14 +124,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if last_heartbeat != 0 && (now - last_heartbeat > WATCHDOG_TIMEOUT_MS) {
                     // Watchdog Triggered -> Revert to BIOS completely
                     if !is_failsafe_triggered {
-                        println!("[URGENT] Watchdog: IPC Heartbeat lost! Halting PyTorch ML processing and reverting to BIOS.");
+                        error!("Watchdog: IPC heartbeat lost! Halting PyTorch ML processing and reverting to BIOS.");
                         write_pwm(&enable_path, 2);
                         is_failsafe_triggered = true;
                     }
                 } else if last_heartbeat != 0 {
                     // Brain Recovered
                     if is_failsafe_triggered {
-                        println!("[INFO] Python Daemon recovered! Retaking BIOS Control.");
+                        info!("Python daemon recovered! Retaking BIOS Control.");
                         write_pwm(&enable_path, 1);
                         is_failsafe_triggered = false;
                     }
@@ -126,21 +150,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "pwm": current_applied_pwm,
                     "heartbeat": last_heartbeat,
                     "failsafe": is_failsafe_triggered,
-                    "ui_lock": is_ui_locked,
-                    "cpu_temp": ghost_link.get_cpu_temp(),
-                    "gpu_temp": ghost_link.get_gpu_temp(),
-                    "watts": ghost_link.get_watts(),
-                    "predicted": ghost_link.get_predicted_temp(),
-                    "core_temps": ghost_link.get_core_temps()
-                });
-                let _ = tx_clone.send(payload.to_string());
+            let bcast_payload = json!({
+                "pwm": current_applied_pwm,
+                "heartbeat": last_heartbeat,
+                "failsafe": is_failsafe_triggered,
+                "ui_lock": is_ui_locked,
+                "cpu_temp": ghost_link.get_cpu_temp(),
+                "gpu_temp": ghost_link.get_gpu_temp(),
+                "watts": ghost_link.get_watts(),
+                "predicted": ghost_link.get_predicted_temp(),
+                "core_temps": ghost_link.get_core_temps()
+            });
+            // Throttle broadcast to 10Hz to save UI rendering overload
+            if ticks % 10 == 0 {
+                tx_clone.send(bcast_payload.to_string()).ok();
             }
         }
     });
 
     // 3. WebSocket Setup
     let listener = TcpListener::bind("127.0.0.1:8888").await?;
-    println!("Asynchronous Two-Way API/React WebSocket live on 127.0.0.1:8888...");
+    info!("Asynchronous Two-Way API/React WebSocket live on 127.0.0.1:8888...");
 
     while let Ok((stream, addr)) = listener.accept().await {
         let tx_bcast = tx.clone();
@@ -149,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             let ws_stream = tokio_tungstenite::accept_async(stream).await;
             if let Ok(ws) = ws_stream {
-                println!("React Component Connected: {:?}", addr);
+                info!("React Component Connected: {:?}", addr);
                 let (mut ws_tx, mut ws_rx) = ws.split();
                 let mut rx = tx_bcast.subscribe();
 
@@ -169,15 +199,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(msg.to_text().unwrap_or("{}")) {
                                             if parsed["type"].as_str() == Some("MANUAL_OVERRIDE") {
                                                 if let Some(pwm) = parsed["pwm"].as_i64() {
-                                                    let mut s = state_bcast.lock().unwrap();
-                                                    s.manual_override_lock = true;
-                                                    s.manual_pwm = pwm as i32;
-                                                    println!("Received React Override Command -> Locked PWM to: {}", pwm);
+                                                    if let Ok(mut s) = state_bcast.lock() {
+                                                        s.manual_override_lock = true;
+                                                        s.manual_pwm = pwm as i32;
+                                                        info!("Received React Override Command -> Locked PWM to: {}", pwm);
+                                                    }
                                                 }
                                             } else if parsed["type"].as_str() == Some("RELEASE_OVERRIDE") {
-                                                let mut s = state_bcast.lock().unwrap();
-                                                s.manual_override_lock = false;
-                                                println!("Received React Release! Passing control back to PyTorch IPC Engine.");
+                                                if let Ok(mut s) = state_bcast.lock() {
+                                                    s.manual_override_lock = false;
+                                                    info!("Received React Release! Passing control back to PyTorch IPC Engine.");
+                                                }
                                             }
                                         }
                                     }
@@ -187,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                println!("React Controller Disconnected: {:?}", addr);
+                info!("React Controller Disconnected: {:?}", addr);
             }
         });
     }

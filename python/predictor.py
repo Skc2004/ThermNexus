@@ -4,6 +4,18 @@ import mmap
 import struct
 import torch
 import torch.nn as nn
+import signal
+import atexit
+import json
+import logging
+import config_loader
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger("thermalnexus.brain")
 
 try:
     from bcc import BPF
@@ -48,6 +60,11 @@ class GhostLinkWriter:
         self.mm.write(base_data)
         self.mm.write(core_data)
         
+    def zero_heartbeat(self):
+        """Zero out heartbeat so Rust watchdog reverts to BIOS."""
+        self.mm.seek(8)
+        self.mm.write(struct.pack(">q", 0))
+
     def close(self):
         self.mm.close()
         self.f.close()
@@ -84,6 +101,35 @@ class ThermalPredictor(nn.Module):
         x = self.linear1(x)
         x = self.relu(x)
         return self.linear2(x)
+
+def get_real_core_temps(config_path=None):
+    """Read real per-core temperatures from sysfs via discovered config."""
+    if config_path is None:
+        config_path = os.path.join(os.path.dirname(__file__), "thermal_config.json")
+    
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+        
+        # Find the coretemp driver
+        for hwmon_id, info in config.items():
+            if info.get("name") == "coretemp":
+                temps = []
+                for sensor_id, sensor in sorted(info["temperatures"].items()):
+                    if "Core" in sensor.get("label", ""):
+                        try:
+                            with open(sensor["input_file"]) as tf:
+                                temps.append(float(tf.read().strip()) / 1000.0)
+                        except (IOError, ValueError):
+                            pass
+                if temps:
+                    # Pad to 8 cores if fewer
+                    while len(temps) < 8:
+                        temps.append(temps[-1])
+                    return temps[:8]
+    except Exception:
+        pass
+    return None
 
 def get_current_mock_temp():
     try:
@@ -123,24 +169,50 @@ def get_power_consumption():
     return 15.0 # Global Default Fallback
 
 def run():
-    print("1. Booting DeepMind eBPF X-Ray Probe...")
+    log.info("1. Booting DeepMind eBPF X-Ray Probe...")
     b = None
     if BPF is not None:
         try:
             b = BPF(text=bpf_text)
-            print(" -> BPF Memory Fault Hooks Injected Successfully.")
+            log.info(" -> BPF Memory Fault Hooks Injected Successfully.")
         except Exception as e:
-            print(f" -> [WARN] BPF compilation failed (sudo required). Running in simulation fallback.")
+            log.warning(" -> [WARN] BPF compilation failed (sudo required). Running in simulation fallback.")
             
-    print(f"2. Booting GhostLink Shared Memory Buffer... GPU NVML Injected: {HAS_GPU}")
+    log.info(f"2. Booting GhostLink Shared Memory Buffer... GPU NVML Injected: {HAS_GPU}")
     ghost_link = GhostLinkWriter()
     
-    print("3. Initializing PyTorch Predictor Model...")
+    def shutdown(gl):
+        log.info("[SHUTDOWN] Zeroing heartbeat to trigger Rust watchdog...")
+        try:
+            gl.zero_heartbeat()
+            gl.close()
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGTERM, lambda *_: shutdown(ghost_link))
+    atexit.register(lambda: shutdown(ghost_link))
+    
+    log.info("3. Initializing PyTorch Predictor Model...")
     model = ThermalPredictor()
+    
+    cfg = config_loader.load_config()
+    MODEL_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), cfg["paths"]["model_weights"])
+    
+    if os.path.exists(MODEL_WEIGHTS):
+        model.load_state_dict(torch.load(MODEL_WEIGHTS, weights_only=True))
+        log.info(f"Loaded trained weights from {MODEL_WEIGHTS}")
+    else:
+        log.warning("[WARN] No trained weights found — running with untrained model!")
+        
     model.eval() # inference mode
     
-    print("==== Python Brain Online. Pre-empting hardware workloads ====")
+    log.info("==== Python Brain Online. Pre-empting hardware workloads ====")
     current_pwm_state = 128
+    
+    history = []
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    ONLINE_LEARN_INTERVAL = 10
+    
     try:
         while True:
             # Memory Fault velocity
@@ -155,9 +227,13 @@ def run():
             cpu_temp = get_current_mock_temp()
             current_watts = get_power_consumption()
             
-            # Generate 8 Core Temps with jitter for the Thermal Map
-            import random
-            core_temps = [cpu_temp + random.uniform(-1.5, 1.5) for _ in range(8)]
+            real_cores = get_real_core_temps()
+            if real_cores:
+                core_temps = real_cores
+                cpu_temp = sum(core_temps) / len(core_temps)
+            else:
+                import random
+                core_temps = [cpu_temp + random.uniform(-1.5, 1.5) for _ in range(8)]
             
             gpu_temp = 40.0
             if HAS_GPU:
@@ -175,18 +251,18 @@ def run():
             try:
                 from scipy.optimize import minimize
                 
-                T_target = 45.0
+                T_target = cfg["mpc"]["target_temp"]
                 
                 def mpc_cost(pwm_action):
                     action = pwm_action[0]
                     delta_pwm = action - current_pwm_state
                     projected_t = predicted_temp - (action / 10.0)
                     
-                    acoustic_penalty = 0.5 * (delta_pwm ** 2)
-                    thermal_penalty = 20.0 * max(0, projected_t - T_target)**2
+                    acoustic_penalty = cfg["mpc"]["acoustic_penalty"] * (delta_pwm ** 2)
+                    thermal_penalty = cfg["mpc"]["thermal_penalty"] * max(0, projected_t - T_target)**2
                     return acoustic_penalty + thermal_penalty
 
-                res = minimize(mpc_cost, [current_pwm_state], bounds=[(40, 255)])
+                res = minimize(mpc_cost, [current_pwm_state], bounds=[(cfg["mpc"]["pwm_min"], cfg["mpc"]["pwm_max"])])
                 target_pwm = int(res.x[0])
             except ImportError:
                 target_pwm = 80 # Idle baseline
@@ -196,11 +272,30 @@ def run():
             current_pwm_state = target_pwm
             ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps)
             
-            print(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | Power: {current_watts:.1f}W | Pred: {predicted_temp:.1f}C -> PWM: {target_pwm}")
+            history.append((inputs.clone(), cpu_temp))
+            if len(history) >= ONLINE_LEARN_INTERVAL:
+                old_input, _ = history[-ONLINE_LEARN_INTERVAL]
+                actual_now = torch.tensor([[cpu_temp]], dtype=torch.float32)
+                
+                model.train()
+                pred = model(old_input)
+                loss = nn.MSELoss()(pred, actual_now)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                model.eval()
+                
+                if len(history) % 100 == 0:
+                    os.makedirs(os.path.dirname(MODEL_WEIGHTS), exist_ok=True)
+                    torch.save(model.state_dict(), MODEL_WEIGHTS)
+                if len(history) > 1000:
+                    history = history[-500:]
+            
+            log.info(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | Power: {current_watts:.1f}W | Pred: {predicted_temp:.1f}C -> PWM: {target_pwm}")
             time.sleep(0.5)
             
     except KeyboardInterrupt:
-        print("Shutting down eBPF Brain.")
+        log.info("Shutting down eBPF Brain.")
         ghost_link.close()
 
 if __name__ == "__main__":

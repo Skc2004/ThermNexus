@@ -21,12 +21,30 @@ export default function App() {
   const lastAction = useRef({ pwm: 0, temp: 0, time: Date.now() });
 
   useEffect(() => {
-    wsRef.current = new WebSocket('ws://localhost:8888');
+    let reconnectDelay = 1000;
+    let reconnectTimer = null;
+    let ws = null;
 
-    wsRef.current.onopen = () => setStatus('Online');
-    wsRef.current.onclose = () => setStatus('Disconnected');
-    
-    wsRef.current.onmessage = (event) => {
+    function connect() {
+        ws = new WebSocket('ws://localhost:8888');
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+            setStatus('Online');
+            reconnectDelay = 1000; // Reset on success
+        };
+
+        ws.onclose = () => {
+            setStatus('Reconnecting...');
+            reconnectTimer = setTimeout(() => {
+                reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+                connect();
+            }, reconnectDelay);
+        };
+
+        ws.onerror = () => ws.close(); // Triggers onclose → reconnect
+        
+        ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
         setUiLock(payload.ui_lock);
@@ -68,7 +86,14 @@ export default function App() {
       } catch (e) {}
     };
 
-    return () => wsRef.current && wsRef.current.close();
+    }
+
+    connect();
+
+    return () => {
+        clearTimeout(reconnectTimer);
+        wsRef.current && wsRef.current.close();
+    };
   }, []);
 
   const sendOverride = (val) => {

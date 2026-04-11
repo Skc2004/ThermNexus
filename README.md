@@ -9,33 +9,46 @@ Predicts heat 5 seconds into the future using kernel-level memory page-fault tra
 ```
   Dashboard (Electron/React)  <-- WebSocket -->  Rust Daemon (100Hz)
                                                       |
-                                                GhostLink mmap
-                                                      |
-                                                Python Brain
-                                           (eBPF + PyTorch + MPC)
-```
+- **Rust Core:** 100Hz tight control loop for fan PWM based on shared memory directives. Broadcasts real-time metrics via WebSockets.
+- **Python ML Brain:** Analyzes telemetry via eBPF X-Ray probes and predicts thermal ramps using PyTorch offline-trained models with online fine-tuning.
+- **React/Electron Dashboard:** A beautiful, responsive thermal monitor providing micro-animations and heatmaps.
 
-**Data Flow**: eBPF page faults + CPU/GPU temps -> PyTorch prediction -> MPC optimizer -> GhostLink shared memory -> Rust PWM writer -> sysfs hwmon
+## Installation
 
-**Safety**: 2-second watchdog reverts to BIOS control if the Python brain dies.
-
-## Quick Start
+ThermNexus is built to be installed system-wide on Linux platforms using the provided `Makefile`.
 
 ```bash
-# 1. Python env
-conda env create -f environment.yml && conda activate thermalnexus
+# 1. Provide an isolated Conda environment
+conda create -n thermalnexus python=3.12
+conda activate thermalnexus
+pip install -r requirements.txt
 
-# 2. Build Rust daemon
-cd rust_core && cargo build --release
-
-# 3. Dev mode (4 terminals)
-python python/mock_hwmon.py         # Terminal 1: mock hardware
-cd rust_core && cargo run           # Terminal 2: daemon
-python python/predictor.py          # Terminal 3: ML brain
-cd dashboard && npm run dev         # Terminal 4: UI at localhost:5173
+# 2. Build and Install via Makefile
+make install
 ```
 
-## GhostLink IPC (32 bytes, big-endian)
+## Configuration
+
+The system is centrally configured via `/opt/thermalnexus/config/config.toml` (or `config.toml` in the project root during dev).
+
+### Hardware Discovery mode
+By default, ThermNexus uses `hardware_discovery.py` to hunt for supported `hwmon` and `pwm` sysfs interfaces. If your hardware is not auto-discovered, update the configuration to `mode = "manual"` and provide complete paths.
+
+## Running
+
+If installed via the Makefile:
+```bash
+sudo systemctl enable --now thermalnexus.service
+journalctl -u thermalnexus -f   # To tail logs
+```
+
+For development without installing:
+```bash
+make dev
+```
+
+## GhostLink IPC (96 bytes, big-endian)
+Our zero-copy inter-process communication buffer layout:
 
 | Offset | Type  | Field              |
 |--------|-------|--------------------|
@@ -46,16 +59,9 @@ cd dashboard && npm run dev         # Terminal 4: UI at localhost:5173
 | 20     | f32   | GPU Temp (C)       |
 | 24     | f32   | Power (W)          |
 | 28     | f32   | Predicted Temp (C) |
+| 32-63  | 8×f32 | Per-Core Temps (C) |
+| 64-95  | —     | Reserved           |
 
-## WebSocket API (ws://127.0.0.1:8888)
-
-**Server broadcasts** (~10Hz): {"pwm":142,"failsafe":false,"ui_lock":false,"cpu_temp":67.3,...}
-
-**Client commands**: {"type":"MANUAL_OVERRIDE","pwm":200} or {"type":"RELEASE_OVERRIDE"}
-
-## Project Structure
-
-```
 ThermNexus/
 ├── rust_core/          # 100Hz native daemon (PWM, watchdog, WebSocket)
 ├── python/             # eBPF tracing, PyTorch prediction, MPC control

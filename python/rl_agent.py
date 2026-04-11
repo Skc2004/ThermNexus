@@ -5,7 +5,7 @@ import sqlite3
 import numpy as np
 import os
 
-DB_PATH = "thermal_profile.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thermal_profile.db")
 
 class RL_ThermalAgent(nn.Module):
     def __init__(self):
