@@ -12,15 +12,12 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 class ThermalPredictor(nn.Module):
     def __init__(self):
         super(ThermalPredictor, self).__init__()
-        # Inputs: [PageAlloc_Velocity, CPU_Temp, GPU_Temp, CurrentWatts]
-        self.linear1 = nn.Linear(4, 32) 
-        self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(32, 1)
+        self.lstm = nn.LSTM(input_size=4, hidden_size=64, num_layers=2, batch_first=True)
+        self.linear = nn.Linear(64, 1)
         
     def forward(self, x):
-        x = self.linear1(x)
-        x = self.relu(x)
-        return self.linear2(x)
+        lstm_out, _ = self.lstm(x)
+        return self.linear(lstm_out[:, -1, :])
 
 def load_data():
     try:
@@ -44,18 +41,20 @@ def train():
     X = []
     y = []
 
-    for i in range(len(data) - 5): # Predict 5 seconds ahead (profiler runs at 1Hz)
-        row = data[i]
-        future_row = data[i+5]
+    SEQ_LENGTH = 5
+    for i in range(len(data) - SEQ_LENGTH - 5): # Predict 5 seconds ahead
+        seq_features = []
+        for j in range(SEQ_LENGTH):
+            row = data[i + j]
+            # timestamp, cpu_temp, process_velocity, fan_rpm, target_pwm, gpu_temp, power_watts
+            _, cpu_temp, process_velocity, _, _, gpu_temp, power_watts = row
+            seq_features.append([process_velocity, cpu_temp, gpu_temp, power_watts])
+            
+        future_row = data[i + SEQ_LENGTH + 5]
+        future_cpu_temp = future_row[1]
         
-        timestamp, cpu_temp, process_velocity, fan_rpm, target_pwm, gpu_temp, power_watts = row
-        future_timestamp, future_cpu_temp, _, _, _, _, _ = future_row
-
-        features = [process_velocity, cpu_temp, gpu_temp, power_watts]
-        target = future_cpu_temp
-        
-        X.append(features)
-        y.append([target])
+        X.append(seq_features)
+        y.append([future_cpu_temp])
 
     X_tensor = torch.tensor(X, dtype=torch.float32)
     y_tensor = torch.tensor(y, dtype=torch.float32)

@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadialBarChart, RadialBar } from 'recharts';
-import { Cpu, Activity, Gamepad2, Settings, Crosshair, Zap, Power, Disc, Server, Thermometer, Wind } from 'lucide-react';
+import { History, Waves, Cpu, Activity, Gamepad2, Settings, Crosshair, Zap, Power, Disc, Server, Thermometer, Wind } from 'lucide-react';
+import { fetchHistoricData } from './api';
 
 export default function App() {
   const [data, setData] = useState([]);
+  const [viewMode, setViewMode] = useState('live');
+  const [historicData, setHistoricData] = useState([]);
   const [status, setStatus] = useState('Disconnected');
   const [uiLock, setUiLock] = useState(false);
   const [currentPwm, setCurrentPwm] = useState(0);
@@ -19,6 +22,19 @@ export default function App() {
   
   const wsRef = useRef(null);
   const lastAction = useRef({ pwm: 0, temp: 0, time: Date.now() });
+
+  useEffect(() => {
+    if (viewMode === 'historic') {
+        fetchHistoricData(24, 800).then(res => {
+            const mapped = res.map(d => ({
+                time: new Date(d.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
+                pwm: d.pwm,
+                cpu: d.cpu_temp
+            }));
+            setHistoricData(mapped);
+        });
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     let reconnectDelay = 1000;
@@ -113,7 +129,14 @@ export default function App() {
     if (temp < 55) return 'from-blue-500/40 to-blue-900/20 shadow-blue-500/20';
     if (temp < 70) return 'from-orange-500/40 to-orange-900/20 shadow-orange-500/20';
     return 'from-red-500/40 to-red-900/20 shadow-red-500/30';
+  const getHeatColor = (temp) => {
+    if (temp < 40) return 'from-teal-500/40 to-teal-900/20 shadow-teal-500/20';
+    if (temp < 55) return 'from-blue-500/40 to-blue-900/20 shadow-blue-500/20';
+    if (temp < 70) return 'from-orange-500/40 to-orange-900/20 shadow-orange-500/20';
+    return 'from-red-500/40 to-red-900/20 shadow-red-500/30';
   };
+
+  const chartData = viewMode === 'live' ? data : historicData;
 
   return (
     <div className="min-h-screen bg-[#050506] text-[#c9d1d9] font-sans selection:bg-blue-500/30 overflow-hidden flex flex-col border border-white/5">
@@ -135,7 +158,8 @@ export default function App() {
         {/* SIDEBAR */}
         <aside className="w-20 bg-white/[0.01] border-r border-white/5 flex flex-col items-center py-8 justify-between z-10">
            <div className="flex flex-col gap-8">
-               <button className="p-3 bg-blue-500/20 text-blue-400 rounded-xl border border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.3)]"><Activity size={24}/></button>
+               <button onClick={() => setViewMode('live')} className={`p-3 rounded-xl transition-all ${viewMode === 'live' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.3)]' : 'text-white/20 hover:bg-white/5'}`} title="Live Hardware Engine"><Activity size={24}/></button>
+               <button onClick={() => setViewMode('historic')} className={`p-3 rounded-xl transition-all ${viewMode === 'historic' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.3)]' : 'text-white/20 hover:bg-white/5'}`} title="SQLite Time Travel Analysis"><History size={24}/></button>
                <button className="p-3 text-white/20 hover:bg-white/5 rounded-xl transition-all"><Cpu size={24}/></button>
                <button className="p-3 text-white/20 hover:bg-white/5 rounded-xl transition-all"><Wind size={24}/></button>
                <button className="p-3 text-white/20 hover:bg-white/5 rounded-xl transition-all"><Settings size={24}/></button>
@@ -214,14 +238,16 @@ export default function App() {
             <div className="grid grid-cols-12 gap-6">
                 <div className="col-span-12 h-64 bg-white/[0.01] border border-white/5 rounded-3xl p-6 relative overflow-hidden">
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-white/40 font-black tracking-widest uppercase text-[10px]">Realtime Action/Physics Synchronization</h3>
+                        <h3 className="text-white/40 font-black tracking-widest uppercase text-[10px]">
+                            {viewMode === 'live' ? 'Realtime Action/Physics Synchronization' : 'Historic SQLite Time-Travel (24hr Window)'}
+                        </h3>
                         <div className="flex gap-4 text-[10px] font-bold tracking-widest uppercase">
                             <span className="text-blue-400 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span> PWM Target</span>
                             <span className="text-purple-400 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-purple-400 rounded-full"></span> Core Temp Avg</span>
                         </div>
                     </div>
                     <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                        <AreaChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
                         <defs>
                             <linearGradient id="pwmGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient>
                             <linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a855f7" stopOpacity={0.05}/><stop offset="95%" stopColor="#a855f7" stopOpacity={0}/></linearGradient>

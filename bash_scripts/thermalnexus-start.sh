@@ -73,6 +73,10 @@ echo $! > "$PID_DIR/profiler.pid"
 "$PYTHON_BIN" "$PROJECT_DIR/python/predictor.py" > /tmp/thermal_predictor.log 2>&1 &
 echo $! > "$PID_DIR/predictor.pid"
 
+# Boot the Local JSON REST API in background
+"$PYTHON_BIN" "$PROJECT_DIR/python/api_server.py" > /tmp/thermal_api_server.log 2>&1 &
+echo $! > "$PID_DIR/api_server.pid"
+
 echo "Background AI logic booted successfully. Predictor PID: $(cat "$PID_DIR/predictor.pid")"
 echo "Targeting Hardware: $PWM_PATH (Enable: $ENABLE_PATH)"
 

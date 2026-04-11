@@ -13,7 +13,8 @@ dev:
 	@echo "  1. python python/mock_hwmon.py"
 	@echo "  2. cd rust_core && cargo run"
 	@echo "  3. python python/predictor.py"
-	@echo "  4. cd dashboard && npm run dev"
+	@echo "  4. python python/api_server.py"
+	@echo "  5. cd dashboard && npm run dev"
 
 install: build
 	@echo "Installing ThermalNexus to $(PREFIX)..."

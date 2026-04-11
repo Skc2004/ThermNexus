@@ -92,15 +92,14 @@ TRACEPOINT_PROBE(kmem, mm_page_alloc) {
 class ThermalPredictor(nn.Module):
     def __init__(self):
         super(ThermalPredictor, self).__init__()
-        # Inputs: [PageAlloc_Velocity, CPU_Temp, GPU_Temp, CurrentWatts]
-        self.linear1 = nn.Linear(4, 32) 
-        self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(32, 1) # Output: Predicted Heat Saturation T_{t+5s}
+        # Input features: [PageAlloc_Velocity, CPU_Temp, GPU_Temp, CurrentWatts]
+        self.lstm = nn.LSTM(input_size=4, hidden_size=64, num_layers=2, batch_first=True)
+        self.linear = nn.Linear(64, 1) # Output: Predicted Heat Saturation T_{t+5s}
         
     def forward(self, x):
-        x = self.linear1(x)
-        x = self.relu(x)
-        return self.linear2(x)
+        lstm_out, _ = self.lstm(x)
+        # We only want the prediction from the final timestep
+        return self.linear(lstm_out[:, -1, :])
 
 def get_real_core_temps(config_path=None):
     """Read real per-core temperatures from sysfs via discovered config."""
@@ -212,6 +211,8 @@ def run():
     history = []
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     ONLINE_LEARN_INTERVAL = 10
+    SEQ_LENGTH = 5
+    feature_queue = []
     
     try:
         while True:
@@ -241,11 +242,20 @@ def run():
                     gpu_temp = pynvml.nvmlDeviceGetTemperature(GPU_HANDLE, pynvml.NVML_TEMPERATURE_GPU)
                 except:
                     pass
+                    
+            # Sliding Window Queue Management
+            current_feature = [mem_velocity, cpu_temp, gpu_temp, current_watts]
+            feature_queue.append(current_feature)
+            if len(feature_queue) > SEQ_LENGTH:
+                feature_queue.pop(0)
             
             # Predict overall System T_{t+5s} based on CPU + GPU + Memory Cache Page Miss loads
             with torch.no_grad():
-                inputs = torch.tensor([[mem_velocity, cpu_temp, gpu_temp, current_watts]], dtype=torch.float32)
-                predicted_temp = model(inputs).item()
+                if len(feature_queue) == SEQ_LENGTH:
+                    inputs = torch.tensor([feature_queue], dtype=torch.float32)
+                    predicted_temp = model(inputs).item()
+                else:
+                    predicted_temp = cpu_temp
             
             # === MODEL PREDICTIVE CONTROL (MPC) HORIZON ===
             try:
@@ -272,24 +282,27 @@ def run():
             current_pwm_state = target_pwm
             ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps)
             
-            history.append((inputs.clone(), cpu_temp))
-            if len(history) >= ONLINE_LEARN_INTERVAL:
-                old_input, _ = history[-ONLINE_LEARN_INTERVAL]
-                actual_now = torch.tensor([[cpu_temp]], dtype=torch.float32)
-                
-                model.train()
-                pred = model(old_input)
-                loss = nn.MSELoss()(pred, actual_now)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                model.eval()
-                
-                if len(history) % 100 == 0:
-                    os.makedirs(os.path.dirname(MODEL_WEIGHTS), exist_ok=True)
-                    torch.save(model.state_dict(), MODEL_WEIGHTS)
-                if len(history) > 1000:
-                    history = history[-500:]
+            # Online fine-tuning history stack
+            history.append((feature_queue.copy(), cpu_temp))
+            if len(history) >= ONLINE_LEARN_INTERVAL + SEQ_LENGTH:
+                old_seq, _ = history[-ONLINE_LEARN_INTERVAL]
+                if len(old_seq) == SEQ_LENGTH:
+                    inputs_train = torch.tensor([old_seq], dtype=torch.float32)
+                    actual_now = torch.tensor([[cpu_temp]], dtype=torch.float32)
+                    
+                    model.train()
+                    pred = model(inputs_train)
+                    loss = nn.MSELoss()(pred, actual_now)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    model.eval()
+                    
+                    if len(history) % 100 == 0:
+                        os.makedirs(os.path.dirname(MODEL_WEIGHTS), exist_ok=True)
+                        torch.save(model.state_dict(), MODEL_WEIGHTS)
+                    if len(history) > 1000:
+                        history = history[-500:]
             
             log.info(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | Power: {current_watts:.1f}W | Pred: {predicted_temp:.1f}C -> PWM: {target_pwm}")
             time.sleep(0.5)
