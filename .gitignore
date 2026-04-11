@@ -212,3 +212,4 @@ dashboard/release/
 *.AppImage
 *.asar
 linux-unpacked/
+thermal_profile.db
