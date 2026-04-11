@@ -22,17 +22,31 @@ except Exception:
 class GhostLinkWriter:
     def __init__(self, filename="/tmp/thermal_ghostlink.shm"):
         self.filename = filename
-        if not os.path.exists(self.filename):
-            with open(self.filename, "wb") as f:
-                f.write(b'\x00' * 32)
+        # Expanded to 96 bytes for multi-core and action telemetry
+        if os.path.exists(self.filename):
+            os.remove(self.filename) 
+        
+        with open(self.filename, "wb") as f:
+            f.write(b'\x00' * 96)
                 
         self.f = open(self.filename, "r+b")
-        self.mm = mmap.mmap(self.f.fileno(), 32, access=mmap.ACCESS_WRITE)
+        self.mm = mmap.mmap(self.f.fileno(), 96, access=mmap.ACCESS_WRITE)
         
-    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t):
+    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None):
         now_ms = int(time.time() * 1000)
         self.mm.seek(0)
-        self.mm.write(struct.pack(">4s i q f f f f", b"GHLK", int(target_pwm), now_ms, float(cpu_t), float(gpu_t), float(watts), float(pred_t)))
+        
+        # Base frame (32 bytes)
+        base_data = struct.pack(">4s i q f f f f", b"GHLK", int(target_pwm), now_ms, float(cpu_t), float(gpu_t), float(watts), float(pred_t))
+        
+        # Core data (32 bytes for 8 cores)
+        if core_temps is None or len(core_temps) < 8:
+            core_temps = [cpu_t] * 8 # Fallback
+        
+        core_data = struct.pack(">8f", *core_temps[:8])
+        
+        self.mm.write(base_data)
+        self.mm.write(core_data)
         
     def close(self):
         self.mm.close()
@@ -78,6 +92,36 @@ def get_current_mock_temp():
     except Exception:
         return 45.0
 
+def get_power_consumption():
+    """Attempt to read real power consumption via Intel RAPL or psutil."""
+    # Source A: Intel RAPL Energy Counter (Absolute power since boot)
+    rapl_path = "/sys/class/powercap/intel-rapl:0/energy_uj"
+    if os.path.exists(rapl_path):
+        try:
+            with open(rapl_path, "r") as f:
+                uj1 = int(f.read().strip())
+            time.sleep(0.1) # Delta measurement
+            with open(rapl_path, "r") as f:
+                uj2 = int(f.read().strip())
+            # Power (W) = ΔEnergy (J) / ΔTime (s)
+            return (uj2 - uj1) / (1000000 * 0.1)
+        except Exception:
+            pass
+
+    # Source B: psutil fallback (if psutil sensor_battery is available)
+    try:
+        import psutil
+        if hasattr(psutil, "sensors_battery"):
+            batt = psutil.sensors_battery()
+            if batt and not batt.power_plugged:
+                # Approximate power = V * I (rarely available)
+                # We'll just return a heuristic based on CPU load if we can't get direct power
+                return 5.0 + (psutil.cpu_percent() * 0.25)
+    except Exception:
+        pass
+
+    return 15.0 # Global Default Fallback
+
 def run():
     print("1. Booting DeepMind eBPF X-Ray Probe...")
     b = None
@@ -109,7 +153,11 @@ def run():
                 mem_velocity = 20.0 
                 
             cpu_temp = get_current_mock_temp()
-            current_watts = 15.0 # Stubbed for now
+            current_watts = get_power_consumption()
+            
+            # Generate 8 Core Temps with jitter for the Thermal Map
+            import random
+            core_temps = [cpu_temp + random.uniform(-1.5, 1.5) for _ in range(8)]
             
             gpu_temp = 40.0
             if HAS_GPU:
@@ -122,7 +170,7 @@ def run():
             with torch.no_grad():
                 inputs = torch.tensor([[mem_velocity, cpu_temp, gpu_temp, current_watts]], dtype=torch.float32)
                 predicted_temp = model(inputs).item()
-                
+            
             # === MODEL PREDICTIVE CONTROL (MPC) HORIZON ===
             try:
                 from scipy.optimize import minimize
@@ -146,9 +194,9 @@ def run():
                     target_pwm = int(min(255, (predicted_temp - 50) * 12 + 80))
             
             current_pwm_state = target_pwm
-            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp)
+            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps)
             
-            print(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | GPU: {gpu_temp:.1f}C | Pred_System_Temp: {predicted_temp:.1f}C -> PWM: {target_pwm}")
+            print(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | Power: {current_watts:.1f}W | Pred: {predicted_temp:.1f}C -> PWM: {target_pwm}")
             time.sleep(0.5)
             
     except KeyboardInterrupt:

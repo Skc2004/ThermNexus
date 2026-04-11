@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadialBarChart, RadialBar } from 'recharts';
-import { Cpu, Activity, Gamepad2, Settings, Crosshair, Zap, Power, Disc, Server } from 'lucide-react';
+import { Cpu, Activity, Gamepad2, Settings, Crosshair, Zap, Power, Disc, Server, Thermometer, Wind } from 'lucide-react';
 
 export default function App() {
   const [data, setData] = useState([]);
@@ -14,8 +14,11 @@ export default function App() {
   const [gpuTemp, setGpuTemp] = useState(0);
   const [watts, setWatts] = useState(0);
   const [confidence, setConfidence] = useState(100);
+  const [coreTemps, setCoreTemps] = useState([0,0,0,0,0,0,0,0]);
+  const [efficacy, setEfficacy] = useState(0);
   
   const wsRef = useRef(null);
+  const lastAction = useRef({ pwm: 0, temp: 0, time: Date.now() });
 
   useEffect(() => {
     wsRef.current = new WebSocket('ws://localhost:8888');
@@ -29,20 +32,30 @@ export default function App() {
         setUiLock(payload.ui_lock);
         setCurrentPwm(payload.pwm);
         setFailsafe(payload.failsafe);
-        // Absorb native physics variables unconditionally without modification
         setCpuTemp(payload.cpu_temp ? payload.cpu_temp.toFixed(1) : "0.0");
         setGpuTemp(payload.gpu_temp ? payload.gpu_temp.toFixed(1) : "0.0");
         setWatts(payload.watts ? payload.watts.toFixed(1) : "0.0");
+        if (payload.core_temps) setCoreTemps(payload.core_temps);
 
-        // Map confidence tracking relative to predicted temp differences
+        // Action Efficacy Logic (Delta T / Delta PWM)
+        const now = Date.now();
+        if (now - lastAction.current.time > 5000) {
+            const dT = lastAction.current.temp - payload.cpu_temp;
+            const dP = payload.pwm - lastAction.current.pwm;
+            if (dP > 10) {
+                const eff = (dT / dP) * 100;
+                setEfficacy(eff.toFixed(2));
+            }
+            lastAction.current = { pwm: payload.pwm, temp: payload.cpu_temp, time: now };
+        }
+
         if (payload.predicted && payload.cpu_temp) {
              const diff = Math.abs(payload.predicted - payload.cpu_temp);
-             let conf = 100 - (diff * 5); // 1 degree diff drops confidence slightly
+             let conf = 100 - (diff * 5);
              setConfidence(Math.max(0, Math.min(100, conf)));
         }
         
         const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false, hour: "numeric", minute: "numeric", second: "numeric" });
-        
         setData(prev => {
           const newData = [...prev, {
             time: timestamp,
@@ -55,7 +68,7 @@ export default function App() {
       } catch (e) {}
     };
 
-    return () => wsRef.current.close();
+    return () => wsRef.current && wsRef.current.close();
   }, []);
 
   const sendOverride = (val) => {
@@ -70,179 +83,135 @@ export default function App() {
       }
   }
 
-  // Handle Electron Application close
-  const closeApp = () => {
-     window.close();
-  }
-
-  const confidenceData = [
-    { name: 'Base', val: 100, fill: '#1a1d24' },
-    { name: 'AI Confidence', val: uiLock ? 0 : confidence, fill: uiLock ? '#ef4444' : '#3b82f6' }
-  ];
+  const getHeatColor = (temp) => {
+    if (temp < 40) return 'from-teal-500/40 to-teal-900/20 shadow-teal-500/20';
+    if (temp < 55) return 'from-blue-500/40 to-blue-900/20 shadow-blue-500/20';
+    if (temp < 70) return 'from-orange-500/40 to-orange-900/20 shadow-orange-500/20';
+    return 'from-red-500/40 to-red-900/20 shadow-red-500/30';
+  };
 
   return (
-    <div className="min-h-screen bg-black/60 text-[#c9d1d9] font-sans selection:bg-blue-500/30 overflow-hidden flex flex-col" style={{ backdropFilter: 'blur(30px)' }}>
+    <div className="min-h-screen bg-[#050506] text-[#c9d1d9] font-sans selection:bg-blue-500/30 overflow-hidden flex flex-col border border-white/5">
       
       {/* NATIVE OS DRAG BAR */}
-      <div className="h-10 w-full flex justify-between items-center px-4 shrink-0 bg-transparent" style={{ WebkitAppRegion: 'drag' }}>
+      <div className="h-10 w-full flex justify-between items-center px-4 shrink-0 bg-white/[0.02]" style={{ WebkitAppRegion: 'drag' }}>
         <div className="flex gap-3 items-center">
             <div className="w-4 h-4 rounded-full bg-blue-500/80 shadow-[0_0_10px_rgba(59,130,246,0.8)] border border-blue-400"></div>
-            <span className="text-xs font-black tracking-[0.2em] text-white/70">THERMALNEXUS <span className="opacity-40">// EMBEDDED SYSTEM OS</span></span>
+            <span className="text-xs font-black tracking-[0.2em] text-white/70">THERMNEXUS <span className="opacity-40">// SYSTEM CORE</span></span>
         </div>
         <div className="flex gap-4" style={{ WebkitAppRegion: 'no-drag' }}>
-            <button onClick={closeApp} className="w-3 h-3 rounded-full border border-white/10 bg-red-500/50 hover:bg-red-500 hover:shadow-[0_0_15px_rgba(239,68,68,1)] transition-all"></button>
-            <button className="w-3 h-3 rounded-full border border-white/10 bg-yellow-500/50 hover:bg-yellow-500 transition-all"></button>
-            <button className="w-3 h-3 rounded-full border border-white/10 bg-green-500/50 hover:bg-green-500 transition-all"></button>
+            <div className="w-3 h-3 rounded-full bg-white/10"></div>
+            <div className="w-3 h-3 rounded-full bg-white/10"></div>
+            <div className="w-3 h-3 rounded-full bg-red-500/50"></div>
         </div>
       </div>
 
-      {/* CORE WRAPPER */}
       <div className="flex h-[calc(100vh-2.5rem)]">
-        
-        {/* SIDEBAR NAVIGATION */}
-        <aside className="w-20 bg-white/[0.02] border-r border-white/5 flex flex-col items-center py-8 justify-between z-10">
+        {/* SIDEBAR */}
+        <aside className="w-20 bg-white/[0.01] border-r border-white/5 flex flex-col items-center py-8 justify-between z-10">
            <div className="flex flex-col gap-8">
-               <button className="p-3 bg-blue-500/20 text-blue-400 rounded-xl border border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:scale-110 transition-transform"><Activity size={24}/></button>
-               <button className="p-3 text-white/40 hover:bg-white/5 hover:text-white rounded-xl transition-all"><Crosshair size={24}/></button>
-               <button className="p-3 text-white/40 hover:bg-white/5 hover:text-white rounded-xl transition-all"><Cpu size={24}/></button>
-               <button className="p-3 text-white/40 hover:bg-white/5 hover:text-white rounded-xl transition-all"><Settings size={24}/></button>
+               <button className="p-3 bg-blue-500/20 text-blue-400 rounded-xl border border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.3)]"><Activity size={24}/></button>
+               <button className="p-3 text-white/20 hover:bg-white/5 rounded-xl transition-all"><Cpu size={24}/></button>
+               <button className="p-3 text-white/20 hover:bg-white/5 rounded-xl transition-all"><Wind size={24}/></button>
+               <button className="p-3 text-white/20 hover:bg-white/5 rounded-xl transition-all"><Settings size={24}/></button>
            </div>
-           <button className="p-3 text-white/20 hover:text-red-500 rounded-xl transition-all"><Power size={24}/></button>
+           <button className="p-3 text-white/10 hover:text-red-500 rounded-xl transition-all"><Power size={24}/></button>
         </aside>
 
-        {/* MAIN DASHBOARD */}
-        <main className="flex-1 p-8 overflow-y-auto">
-            {/* HEROGRAM INTRO */}
-            <header className="mb-10 flex justify-between items-end">
+        {/* MAIN */}
+        <main className="flex-1 p-6 overflow-y-auto thin-scrollbar">
+            <header className="mb-8 flex justify-between items-center">
                <div>
-                   <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-white/50 tracking-tight leading-tight mb-2">
-                       Aero-Acoustic Engine
-                   </h1>
-                   <p className="text-gray-500 tracking-widest text-sm font-semibold uppercase flex items-center gap-3">
-                       <span className={`w-2 h-2 rounded-full ${status === 'Online' ? 'bg-green-400 shadow-[0_0_8px_#4ade80]' : 'bg-red-500'}`}></span>
-                       RUST DAEMON / MULTI-DEVICE X-RAY / STATUS: {status}
+                   <h1 className="text-3xl font-black text-white tracking-tight leading-tight">Adaptive Thermal Node</h1>
+                   <p className="text-white/30 tracking-widest text-[10px] font-bold uppercase flex items-center gap-2">
+                       <span className={`w-2 h-2 rounded-full ${status === 'Online' ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></span>
+                       Hardware Link: {status} | Version 1.1.4
                    </p>
                </div>
-               
-               <div className="flex items-center gap-4 bg-white/[0.03] p-2 rounded-2xl border border-white/10 backdrop-blur-md">
-                   <div className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold uppercase tracking-wider ${uiLock ? 'bg-orange-500 text-black shadow-[0_0_20px_rgba(249,115,22,0.4)]' : 'text-white/50'}`}>
-                        <Gamepad2 size={16}/> Manual Override
-                   </div>
-                   <div className={`px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold uppercase tracking-wider ${!uiLock ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'text-white/50'}`}>
-                        <Zap size={16}/> DeepMind PyTorch
+               <div className="flex gap-4">
+                   <div className={`px-4 py-2 rounded-xl flex items-center gap-2 text-[10px] font-black uppercase border ${uiLock ? 'bg-orange-500/20 border-orange-500 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.2)]' : 'border-white/5 text-white/20'}`}>
+                        <Gamepad2 size={12}/> Manual Override
                    </div>
                </div>
             </header>
 
-            {/* THREE-COLUMN METRICS TILESET */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-               
-               {/* TILE 1: PHYSICS MATRIX */}
-               <div className="bg-gradient-to-br from-white/[0.05] to-transparent border border-white/[0.08] rounded-3xl p-6 relative overflow-hidden backdrop-blur-2xl shadow-2xl">
-                   <div className="absolute top-0 right-0 p-4 opacity-20"><Server size={80}/></div>
-                   <h3 className="text-white/40 text-xs font-black tracking-widest uppercase mb-6">Realtime Physics Constraints</h3>
-                   
-                   <div className="space-y-4">
-                       <div className="flex justify-between items-baseline">
-                           <span className="text-gray-400 font-medium">Core Temp (N0)</span>
-                           <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-300">{cpuTemp}°C</span>
-                       </div>
-                       <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{width: `${cpuTemp}%`}}></div></div>
-                       
-                       <div className="flex justify-between items-baseline pt-2">
-                           <span className="text-gray-400 font-medium">GPU Hotspot</span>
-                           <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-300">{gpuTemp}°C</span>
-                       </div>
-                       <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-purple-500 rounded-full" style={{width: `${gpuTemp}%`}}></div></div>
-                   </div>
-               </div>
+            <div className="grid grid-cols-12 gap-6 mb-6">
+                {/* PHYSICS & THERMAL MAP */}
+                <div className="col-span-8 grid grid-cols-2 gap-6">
+                    {/* TILE: LIVE THERMAL MAP */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-6 relative">
+                        <h3 className="text-white/30 text-[10px] font-black tracking-widest uppercase mb-4 flex items-center gap-2">
+                           <Thermometer size={12}/> Live Thermal Grid (8-Core Map)
+                        </h3>
+                        <div className="grid grid-cols-4 gap-3 p-2 bg-black/40 rounded-2xl border border-white/5">
+                            {coreTemps.map((temp, i) => (
+                                <div key={i} className={`aspect-square rounded-lg bg-gradient-to-br ${getHeatColor(temp)} border border-white/10 flex flex-col items-center justify-center transition-all duration-500 shadow-lg`}>
+                                    <span className="text-[10px] font-black text-white">{temp.toFixed(1)}°</span>
+                                    <span className="text-[6px] font-bold text-white/40 uppercase">Core {i}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
 
-                {/* TILE 2: AI CONFIDENCE RADIAL */}
-                <div className="bg-gradient-to-br from-white/[0.05] to-transparent border border-white/[0.08] rounded-3xl p-6 relative backdrop-blur-2xl shadow-2xl flex flex-col items-center justify-center">
-                    <h3 className="text-white/40 text-xs font-black tracking-widest uppercase absolute top-6 left-6 w-full text-left">PyTorch RL Confidence</h3>
-                    
-                    <div className="w-40 h-40 relative mt-4">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <RadialBarChart cx="50%" cy="50%" innerRadius="70%" outerRadius="100%" barSize={8} data={confidenceData} startAngle={90} endAngle={-270}>
-                                <RadialBar background={{ fill: '#ffffff0a' }} dataKey="val" cornerRadius={10} />
-                            </RadialBarChart>
-                        </ResponsiveContainer>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-3xl font-black text-white">{uiLock ? '0' : confidence.toFixed(1)}<span className="text-lg opacity-50">%</span></span>
-                            <span className="text-[10px] uppercase tracking-widest text-white/30 font-bold opacity-80 mt-1">{uiLock ? 'SUSPENDED' : 'ACCURACY'}</span>
+                    {/* TILE: ACTION IMPACT ANALYSIS */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-6 flex flex-col justify-between">
+                         <h3 className="text-white/30 text-[10px] font-black tracking-widest uppercase mb-2 flex items-center gap-2">
+                           <Activity size={12}/> Action Impact Analysis
+                        </h3>
+                        <div className="flex-1 flex flex-col items-center justify-center p-4">
+                            <span className={`text-4xl font-black ${parseFloat(efficacy) > 0 ? 'text-green-500' : 'text-blue-400'}`}>
+                                {efficacy > 0 ? '+' : ''}{efficacy}%
+                            </span>
+                            <span className="text-[10px] font-bold tracking-[0.3em] text-white/20 mt-2">COOLING EFFICACY RATE</span>
+                        </div>
+                        <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden mt-2">
+                            <div className="h-full bg-green-500/50 rounded-full transition-all" style={{ width: `${Math.min(100, Math.abs(efficacy * 10))}%` }}></div>
                         </div>
                     </div>
                 </div>
 
-                {/* TILE 3: FAN DUTY CYCLE OVERRIDE TILE */}
-                <div className={`rounded-3xl p-6 relative backdrop-blur-2xl shadow-2xl transition-all duration-500 flex flex-col justify-between ${uiLock ? 'bg-gradient-to-br from-orange-500/20 to-transparent border border-orange-500/30 shadow-[0_0_40px_rgba(249,115,22,0.15)]' : 'bg-gradient-to-br from-white/[0.05] to-transparent border border-white/[0.08]'}`}>
-                    <div className="flex justify-between items-start">
-                         <h3 className={`text-xs font-black tracking-widest uppercase ${uiLock ? 'text-orange-400' : 'text-white/40'}`}>Global Hardware Extractor</h3>
-                         <Disc className={`${uiLock ? 'text-orange-500 animate-spin-slow' : 'text-white/10'}`} size={24}/>
-                    </div>
-
-                    <div className="my-auto">
-                        <h2 className="text-5xl font-black text-white tracking-tighter mb-4">{Math.round((currentPwm/255)*100)}<span className="text-2xl text-white/30">%</span></h2>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                        <div className="flex justify-between w-full">
-                            <span className="text-[10px] font-bold tracking-widest text-white/30">0 RPM</span>
-                            <span className="text-[10px] font-bold tracking-widest text-white/30">MAX RPM</span>
+                {/* FAN OVERRIDE & POWER */}
+                <div className="col-span-4 flex flex-col gap-6">
+                    <div className={`flex-1 rounded-3xl p-6 border transition-all ${uiLock ? 'bg-orange-500/10 border-orange-500/30' : 'bg-white/[0.02] border-white/5'}`}>
+                        <div className="flex justify-between items-start mb-4">
+                             <h3 className="text-white/30 text-[10px] font-black tracking-widest uppercase">Fan Duty Factor</h3>
+                             <Disc className={`${uiLock ? 'text-orange-500 animate-spin-slow' : 'text-white/10'}`} size={18}/>
                         </div>
-                        <input 
-                            type="range" min="0" max="255" value={uiLock ? currentPwm : 0} 
-                            onChange={(e) => sendOverride(e.target.value)}
-                            className={`w-full h-2 rounded-lg appearance-none cursor-pointer transition-colors ${uiLock ? 'bg-orange-900/50 accent-orange-500' : 'bg-gray-800 accent-blue-500/0 grayscale'}`}
-                        />
-                        {uiLock && (
-                            <button onClick={releaseOverride} className="mt-4 w-full py-3 bg-red-500 border border-red-400 hover:bg-red-400 rounded-xl text-xs font-black tracking-widest text-white shadow-[0_0_15px_rgba(239,68,68,0.4)] transition-all">
-                                DETACH HARDWARE OVERRIDE
-                            </button>
-                        )}
+                        <h2 className="text-4xl font-black text-white mb-6">{Math.round((currentPwm/255)*100)}%</h2>
+                        <input type="range" min="0" max="255" value={uiLock ? currentPwm : 0} onChange={(e) => sendOverride(e.target.value)}
+                               className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer ${uiLock ? 'bg-orange-900/50 accent-orange-500' : 'bg-white/5 accent-blue-500/0 opacity-30 shadow-none'}`}/>
+                        {uiLock && <button onClick={releaseOverride} className="mt-4 w-full py-2 bg-red-500/80 hover:bg-red-500 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all">Detach Override</button>}
                     </div>
                 </div>
-
             </div>
 
-            {/* LIVE TELEMETRY GRAPH */}
-            <div className="h-72 w-full bg-gradient-to-t from-white/[0.02] to-transparent border border-white/[0.08] rounded-3xl p-6 relative overflow-hidden backdrop-blur-md">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-white/80 font-bold tracking-widest uppercase text-sm">Realtime Sub-Microsecond Action Engine</h3>
-                    <div className="flex gap-4 text-xs font-black tracking-widest uppercase mt-1">
-                        <span className="text-blue-400 flex items-center gap-2"><span className="w-2 h-2 bg-blue-400 rounded-full"></span> PWM Native Target</span>
-                        <span className="text-purple-400 flex items-center gap-2"><span className="w-2 h-2 bg-purple-400 rounded-full"></span> System Thermals</span>
+            {/* LOWER GRAPH TILE */}
+            <div className="grid grid-cols-12 gap-6">
+                <div className="col-span-12 h-64 bg-white/[0.01] border border-white/5 rounded-3xl p-6 relative overflow-hidden">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-white/40 font-black tracking-widest uppercase text-[10px]">Realtime Action/Physics Synchronization</h3>
+                        <div className="flex gap-4 text-[10px] font-bold tracking-widest uppercase">
+                            <span className="text-blue-400 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span> PWM Target</span>
+                            <span className="text-purple-400 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-purple-400 rounded-full"></span> Core Temp Avg</span>
+                        </div>
                     </div>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                        <defs>
+                            <linearGradient id="pwmGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient>
+                            <linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a855f7" stopOpacity={0.05}/><stop offset="95%" stopColor="#a855f7" stopOpacity={0}/></linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                        <XAxis dataKey="time" stroke="#ffffff10" tick={{fill: '#ffffff20', fontSize: 8}} tickLine={false} axisLine={false}/>
+                        <Tooltip contentStyle={{ backgroundColor: '#000000dd', border: '1px solid #ffffff10', borderRadius: '12px', backdropFilter: 'blur(10px)', fontSize: '10px' }}/>
+                        <Area type="monotone" dataKey="pwm" stroke="#3b82f6" strokeWidth={2} fill="url(#pwmGrad)" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="cpu" stroke="#a855f7" strokeWidth={2} fill="url(#tempGrad)" stopOpacity={0.5} isAnimationActive={false} />
+                        </AreaChart>
+                    </ResponsiveContainer>
                 </div>
-                <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-                    <defs>
-                        <linearGradient id="pwmGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#a855f7" stopOpacity={0.1}/>
-                            <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
-                        </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                    <XAxis dataKey="time" stroke="#ffffff30" tick={{fill: '#ffffff50', fontSize: 10}} tickLine={false} axisLine={false}/>
-                    <YAxis stroke="#ffffff30" tick={{fill: '#ffffff50', fontSize: 10}} tickLine={false} axisLine={false}/>
-                    <Tooltip 
-                        contentStyle={{ backgroundColor: '#0f172aee', borderColor: '#1e293b', borderRadius: '16px', boxShadow: '0 0 20px rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)', padding: '16px' }}
-                        itemStyle={{ fontWeight: 'bold' }}
-                        labelStyle={{ color: '#64748b', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', marginBottom: '8px' }}
-                    />
-                    <Area type="monotone" dataKey="pwm" stroke="#3b82f6" strokeWidth={3} fill="url(#pwmGrad)" activeDot={{r: 6, fill: '#60a5fa', strokeWidth: 0}} />
-                    <Area type="monotone" dataKey="cpu" stroke="#a855f7" strokeWidth={2} fill="url(#tempGrad)" strokeDasharray="5 5" />
-                    </AreaChart>
-                </ResponsiveContainer>
             </div>
-
         </main>
       </div>
-
     </div>
   );
 }

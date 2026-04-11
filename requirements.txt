@@ -1,0 +1,6 @@
+torch
+scipy
+psutil
+scikit-learn
+nvidia-ml-py
+numpy
