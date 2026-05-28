@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "start": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "start": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron . --no-sandbox\"",
     "dev": "vite",
     "build": "vite build",
     "pack": "electron-builder --linux",

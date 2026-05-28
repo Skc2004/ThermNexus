@@ -26,40 +26,49 @@ impl GhostLink {
         Ok(GhostLink { mmap })
     }
 
+    /// Read an i32 from the mmap using volatile reads (safe for IPC shared memory)
+    fn volatile_read_i32(&self, offset: usize) -> i32 {
+        let ptr = self.mmap[offset..].as_ptr() as *const i32;
+        let raw = unsafe { std::ptr::read_volatile(ptr) };
+        i32::from_be_bytes(raw.to_ne_bytes())
+    }
+
+    /// Read an i64 from the mmap using volatile reads (safe for IPC shared memory)
+    fn volatile_read_i64(&self, offset: usize) -> i64 {
+        let ptr = self.mmap[offset..].as_ptr() as *const i64;
+        let raw = unsafe { std::ptr::read_volatile(ptr) };
+        i64::from_be_bytes(raw.to_ne_bytes())
+    }
+
+    /// Read an f32 from the mmap using volatile reads (safe for IPC shared memory)
+    fn volatile_read_f32(&self, offset: usize) -> f32 {
+        let ptr = self.mmap[offset..].as_ptr() as *const u32;
+        let raw = unsafe { std::ptr::read_volatile(ptr) };
+        f32::from_be_bytes(raw.to_ne_bytes())
+    }
+
     pub fn get_target_pwm(&self) -> i32 {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmap[4..8]);
-        i32::from_be_bytes(buf)
+        self.volatile_read_i32(4)
     }
 
     pub fn get_last_heartbeat(&self) -> i64 {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&self.mmap[8..16]);
-        i64::from_be_bytes(buf)
+        self.volatile_read_i64(8)
     }
 
     pub fn get_cpu_temp(&self) -> f32 {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmap[16..20]);
-        f32::from_be_bytes(buf)
+        self.volatile_read_f32(16)
     }
 
     pub fn get_gpu_temp(&self) -> f32 {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmap[20..24]);
-        f32::from_be_bytes(buf)
+        self.volatile_read_f32(20)
     }
 
     pub fn get_watts(&self) -> f32 {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmap[24..28]);
-        f32::from_be_bytes(buf)
+        self.volatile_read_f32(24)
     }
 
     pub fn get_predicted_temp(&self) -> f32 {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmap[28..32]);
-        f32::from_be_bytes(buf)
+        self.volatile_read_f32(28)
     }
 
     /// Read 8 core temperature slots starting at offset 32
@@ -67,9 +76,7 @@ impl GhostLink {
         let mut cores = Vec::with_capacity(8);
         for i in 0..8 {
             let start = 32 + (i * 4);
-            let mut buf = [0u8; 4];
-            buf.copy_from_slice(&self.mmap[start..start+4]);
-            cores.push(f32::from_be_bytes(buf));
+            cores.push(self.volatile_read_f32(start));
         }
         cores
     }

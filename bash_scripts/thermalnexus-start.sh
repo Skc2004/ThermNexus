@@ -80,9 +80,19 @@ echo $! > "$PID_DIR/api_server.pid"
 echo "Background AI logic booted successfully. Predictor PID: $(cat "$PID_DIR/predictor.pid")"
 echo "Targeting Hardware: $PWM_PATH (Enable: $ENABLE_PATH)"
 
-# Execute the Rust Core Daemon in foreground
-# Pass the discovered/configured paths as arguments
-exec "$PROJECT_DIR/rust_core/target/release/thermalnexus-core" \
+# Boot the Rust Core Daemon in background
+"$PROJECT_DIR/rust_core/target/release/thermalnexus-core" \
     --pwm "$PWM_PATH" \
     --enable "$ENABLE_PATH" \
-    --ghostlink "$GHOSTLINK_PATH"
+    --ghostlink "$GHOSTLINK_PATH" > /tmp/thermal_rustcore.log 2>&1 &
+echo $! > "$PID_DIR/rustcore.pid"
+
+echo "Rust daemon online. Booting Electron Application..."
+
+# Ensure Node environment is configured for Vite/Electron
+export PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH"
+
+# Execute the Native Electron Dashboard in foreground
+# This becomes the main blocking process
+cd "$PROJECT_DIR/dashboard"
+exec npm run start

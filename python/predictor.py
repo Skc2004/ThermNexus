@@ -35,11 +35,17 @@ class GhostLinkWriter:
     def __init__(self, filename="/tmp/thermal_ghostlink.shm"):
         self.filename = filename
         # Expanded to 96 bytes for multi-core and action telemetry
-        if os.path.exists(self.filename):
-            os.remove(self.filename) 
-        
-        with open(self.filename, "wb") as f:
-            f.write(b'\x00' * 96)
+        # Create or resize the file — do NOT delete it (Rust may already have it mmap'd)
+        if not os.path.exists(self.filename):
+            with open(self.filename, "wb") as f:
+                f.write(b'\x00' * 96)
+        else:
+            # Ensure correct size without destroying the inode
+            with open(self.filename, "r+b") as f:
+                f.seek(0, 2)  # seek to end
+                size = f.tell()
+                if size < 96:
+                    f.write(b'\x00' * (96 - size))
                 
         self.f = open(self.filename, "r+b")
         self.mm = mmap.mmap(self.f.fileno(), 96, access=mmap.ACCESS_WRITE)
@@ -59,6 +65,7 @@ class GhostLinkWriter:
         
         self.mm.write(base_data)
         self.mm.write(core_data)
+        self.mm.flush()  # Force visibility to Rust daemon's mmap
         
     def zero_heartbeat(self):
         """Zero out heartbeat so Rust watchdog reverts to BIOS."""

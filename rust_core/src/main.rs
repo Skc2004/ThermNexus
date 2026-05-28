@@ -145,12 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Broadcast out over Websockets back to React UI
-            if now % 100 < 10 {
-                let payload = json!({
-                    "pwm": current_applied_pwm,
-                    "heartbeat": last_heartbeat,
-                    "failsafe": is_failsafe_triggered,
-            let bcast_payload = json!({
+            let bcast_payload = serde_json::json!({
                 "pwm": current_applied_pwm,
                 "heartbeat": last_heartbeat,
                 "failsafe": is_failsafe_triggered,
@@ -161,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "predicted": ghost_link.get_predicted_temp(),
                 "core_temps": ghost_link.get_core_temps()
             });
+            
             // Throttle broadcast to 10Hz to save UI rendering overload
             if ticks % 10 == 0 {
                 tx_clone.send(bcast_payload.to_string()).ok();
