@@ -81,3 +81,60 @@ impl GhostLink {
         cores
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::Path;
+
+    fn write_be_bytes(path: &str, offset: u64, bytes: &[u8]) {
+        use std::io::{Seek, SeekFrom};
+        let mut file = OpenOptions::new().write(true).open(path).unwrap();
+        file.seek(SeekFrom::Start(offset)).unwrap();
+        file.write_all(bytes).unwrap();
+    }
+
+    #[test]
+    fn test_ghostlink_mmap_creation() {
+        let path = "/tmp/test_ghostlink_create.shm";
+        let _ = std::fs::remove_file(path);
+        let _gl = GhostLink::new(path).unwrap();
+        assert!(Path::new(path).exists());
+        let meta = std::fs::metadata(path).unwrap();
+        assert_eq!(meta.len(), 96);
+    }
+
+    #[test]
+    fn test_ghostlink_reads() {
+        let path = "/tmp/test_ghostlink_reads.shm";
+        let _ = std::fs::remove_file(path);
+        let gl = GhostLink::new(path).unwrap();
+
+        write_be_bytes(path, 4, &150i32.to_be_bytes());
+        write_be_bytes(path, 8, &1678886400000i64.to_be_bytes());
+        write_be_bytes(path, 16, &45.5f32.to_be_bytes());
+        write_be_bytes(path, 20, &60.2f32.to_be_bytes());
+        write_be_bytes(path, 24, &120.0f32.to_be_bytes());
+        write_be_bytes(path, 28, &55.5f32.to_be_bytes());
+
+        let core_temps = [40.0f32, 41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0];
+        for (i, &temp) in core_temps.iter().enumerate() {
+            write_be_bytes(path, 32 + (i as u64 * 4), &temp.to_be_bytes());
+        }
+
+        assert_eq!(gl.get_target_pwm(), 150);
+        assert_eq!(gl.get_last_heartbeat(), 1678886400000);
+        assert_eq!(gl.get_cpu_temp(), 45.5);
+        assert_eq!(gl.get_gpu_temp(), 60.2);
+        assert_eq!(gl.get_watts(), 120.0);
+        assert_eq!(gl.get_predicted_temp(), 55.5);
+
+        let cores = gl.get_core_temps();
+        assert_eq!(cores.len(), 8);
+        for i in 0..8 {
+            assert_eq!(cores[i], core_temps[i]);
+        }
+    }
+}

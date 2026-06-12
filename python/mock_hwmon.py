@@ -57,7 +57,7 @@ def monitor_pwm():
                     except ValueError:
                         print(f"[HW Simulation] -> Invalid PWM written: {val}")
                         
-            except Exception as e:
+            except Exception:
                 pass
                 
             time.sleep(0.01) # Simulate high frequency poll

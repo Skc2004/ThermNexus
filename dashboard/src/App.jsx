@@ -22,6 +22,7 @@ const StatusDot = ({ online }) => (
 );
 
 // ── Stat Card ──
+// eslint-disable-next-line no-unused-vars
 const StatCard = ({ icon: Icon, label, value, unit, color = 'blue' }) => {
   const glowMap = { blue: 'hover:shadow-blue-500/10', purple: 'hover:shadow-purple-500/10', orange: 'hover:shadow-orange-500/10', teal: 'hover:shadow-teal-500/10', red: 'hover:shadow-red-500/10', green: 'hover:shadow-emerald-500/10' };
   const textMap = { blue: 'text-blue-400', purple: 'text-purple-400', orange: 'text-orange-400', teal: 'text-teal-400', red: 'text-red-400', green: 'text-emerald-400' };
@@ -71,7 +72,7 @@ export default function App() {
   const [algoLog, setAlgoLog] = useState([]);
 
   const wsRef = useRef(null);
-  const lastAction = useRef({ pwm: 0, temp: 0, time: Date.now() });
+  const lastAction = useRef({ pwm: 0, temp: 0, time: 0 });
 
   // ── Historic Data Fetch ──
   useEffect(() => {
@@ -170,7 +171,7 @@ export default function App() {
             }];
             return newData.slice(-60);
           });
-        } catch (e) { /* silently ignore */ }
+        } catch { /* silently ignore */ }
       };
     }
 
@@ -540,7 +541,7 @@ function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, re
 // ══════════════════════════════════════════════
 // ██  PAGE: ALGORITHM ACTIVITY
 // ══════════════════════════════════════════════
-function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidence, heartbeatAge, heartbeatRaw, currentPwm, isOnline, status }) {
+function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidence, heartbeatAge, currentPwm, isOnline, status }) {
   const modeColor = uiLock ? 'orange' : failsafe ? 'red' : 'blue';
   const modeLabel = uiLock ? 'MANUAL OVERRIDE' : failsafe ? 'FAILSAFE / BIOS' : 'AI PREDICTIVE (MPC)';
 
@@ -645,7 +646,7 @@ function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidenc
 // ██  SHARED COMPONENTS
 // ══════════════════════════════════════════════
 
-function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engageManual, confidence, currentPwm }) {
+function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engageManual, confidence }) {
   return (
     <div className={`glass-panel p-5 h-full flex flex-col transition-all duration-500 ${
       uiLock ? 'border-orange-500/30 shadow-[0_0_30px_rgba(249,115,22,0.08)]' : 'border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.05)]'
@@ -760,6 +761,7 @@ function PipelineArrow({ active }) {
   return <span className={`text-lg ${active ? 'text-blue-400/40' : 'text-white/10'}`}>→</span>;
 }
 
+// eslint-disable-next-line no-unused-vars
 function SidebarBtn({ icon: Icon, active, color = 'white', onClick, className = '', title }) {
   const activeStyles = {
     blue: 'bg-blue-500/15 text-blue-400 border border-blue-500/40 shadow-[0_0_16px_rgba(59,130,246,0.15)]',

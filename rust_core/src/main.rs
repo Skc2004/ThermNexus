@@ -3,13 +3,12 @@ mod ghostlink;
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use ghostlink::GhostLink;
-use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::time;
-use tracing::{info, error, warn};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use std::fs::OpenOptions;
@@ -116,12 +115,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if is_ui_locked {
                 // UI 2-WAY OVERRIDE MODE: Ignore Python/Ghostlink completely
                 write_pwm(&enable_path, 1);
-                write_pwm(&pwm_path, std::cmp::min(255, std::cmp::max(0, ui_pwm)));
+                write_pwm(&pwm_path, ui_pwm.clamp(0, 255));
                 current_applied_pwm = ui_pwm;
                 is_failsafe_triggered = false;
             } else {
                 // MPC PYTHON BRAIN MODE
-                if last_heartbeat != 0 && (now - last_heartbeat > WATCHDOG_TIMEOUT_MS) {
+                if last_heartbeat == 0 || (now - last_heartbeat > WATCHDOG_TIMEOUT_MS) {
                     // Watchdog Triggered -> Revert to BIOS completely
                     if !is_failsafe_triggered {
                         error!("Watchdog: IPC heartbeat lost! Halting PyTorch ML processing and reverting to BIOS.");
@@ -138,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Native Native writing
                     let target_pwm = ghost_link.get_target_pwm();
-                    let clamped = std::cmp::min(255, std::cmp::max(0, target_pwm));
+                    let clamped = target_pwm.clamp(0, 255);
                     write_pwm(&pwm_path, clamped);
                     current_applied_pwm = clamped;
                 }
@@ -158,7 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             
             // Throttle broadcast to 10Hz to save UI rendering overload
-            if ticks % 10 == 0 {
+            if ticks.is_multiple_of(10) {
                 tx_clone.send(bcast_payload.to_string()).ok();
             }
         }
@@ -183,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tokio::select! {
                         msg = rx.recv() => {
                             if let Ok(text) = msg {
-                                if ws_tx.send(tokio_tungstenite::tungstenite::Message::Text(text.into())).await.is_err() {
+                                if ws_tx.send(tokio_tungstenite::tungstenite::Message::Text(text)).await.is_err() {
                                     break;
                                 }
                             }

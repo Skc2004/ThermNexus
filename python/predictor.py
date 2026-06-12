@@ -181,7 +181,7 @@ def run():
         try:
             b = BPF(text=bpf_text)
             log.info(" -> BPF Memory Fault Hooks Injected Successfully.")
-        except Exception as e:
+        except Exception:
             log.warning(" -> [WARN] BPF compilation failed (sudo required). Running in simulation fallback.")
             
     log.info(f"2. Booting GhostLink Shared Memory Buffer... GPU NVML Injected: {HAS_GPU}")
@@ -247,7 +247,7 @@ def run():
             if HAS_GPU:
                 try:
                     gpu_temp = pynvml.nvmlDeviceGetTemperature(GPU_HANDLE, pynvml.NVML_TEMPERATURE_GPU)
-                except:
+                except Exception:
                     pass
                     
             # Sliding Window Queue Management

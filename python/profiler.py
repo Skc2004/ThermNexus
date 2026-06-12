@@ -28,14 +28,14 @@ def get_current_mock_temp():
         # Standard hwmon path, defaulting to mock path if not updated yet
         with open("/tmp/hwmon_mock/hwmon0/temp1_input", "r") as f:
             return float(f.read().strip()) / 1000.0
-    except:
+    except Exception:
         return 45.0
 
 def get_current_pwm():
     try:
         with open("/tmp/hwmon_mock/hwmon0/pwm1", "r") as f:
             return int(f.read().strip())
-    except:
+    except Exception:
         return 128
 
 def record_data():

@@ -1,10 +1,8 @@
-import sys
 import time
 import json
 import asyncio
 import websockets
 import os
-import signal
 import subprocess
 
 def log_test(name, result, msg=""):
@@ -75,7 +73,7 @@ async def test_suite():
             val = int(f.read().strip())
             # 2 = BIOS control (failsafe)
             log_test("Rust Daemon Safety Watchdog Triggered (Revert to BIOS)", val == 2)
-    except Exception as e:
+    except Exception:
         log_test("Rust Daemon Safety Watchdog", False, "Could not read pwm1_enable")
 
     print("\n=== Test Suite Complete ===")
