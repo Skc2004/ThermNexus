@@ -249,6 +249,11 @@ def run():
     SEQ_LENGTH = 5
     feature_queue = []
     
+    # Acoustic Smoothing State
+    ema_pwm = 128.0
+    ema_case = 128.0
+    ema_pump = 128.0
+    
     try:
         while True:
             # Memory Fault velocity
@@ -296,6 +301,47 @@ def run():
             state_list = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
             try:
                 target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz, target_voltage_offset_mv = rl.select_action(state_list)
+                
+                # Check Environment Context
+                try:
+                    import psutil
+                    if hasattr(psutil, "sensors_battery"):
+                        batt = psutil.sensors_battery()
+                        if batt and not batt.power_plugged:
+                            # Feature D: Laptop/Battery Aware Hyper-Efficiency
+                            target_pl1_watts = target_pl1_watts * 0.5
+                            target_voltage_offset_mv = -150
+                            target_cpu_freq_mhz = min(target_cpu_freq_mhz, 2500)
+                except: pass
+                
+                # Feature A: Acoustic Smoothing
+                try:
+                    import json
+                    if os.path.exists("/tmp/thermal_acoustic.json"):
+                        with open("/tmp/thermal_acoustic.json", "r") as f:
+                            ac = json.load(f)
+                            if ac.get("enabled", False):
+                                ema_pwm = (ema_pwm * 0.95) + (target_pwm * 0.05)
+                                ema_case = (ema_case * 0.95) + (target_case * 0.05)
+                                ema_pump = (ema_pump * 0.95) + (target_pump * 0.05)
+                                target_pwm = int(ema_pwm)
+                                target_case = int(ema_case)
+                                target_pump = int(ema_pump)
+                            else:
+                                ema_pwm, ema_case, ema_pump = target_pwm, target_case, target_pump
+                except: pass
+
+                # Feature B: Cryo-Boost Emergency Override
+                try:
+                    import json
+                    if os.path.exists("/tmp/thermal_cryo_boost.json"):
+                        with open("/tmp/thermal_cryo_boost.json", "r") as f:
+                            cb = json.load(f)
+                            if cb.get("active_until", 0) > time.time():
+                                target_pwm, target_case, target_pump = 255, 255, 255
+                                target_pl1_watts = 150
+                except: pass
+
                 target_pl1_uw = int(target_pl1_watts * 1_000_000)
                 
                 # Dynamic Hardware Execution (Python Side)
@@ -312,7 +358,21 @@ def run():
             current_pwm_state = target_pwm
             ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts, target_voltage_offset_mv)
             
-            # Online fine-tuning history stack
+            # === RL ONLINE TRAINING (Actor-Critic) ===
+            try:
+                reward = rl.compute_reward(cpu_temp, gpu_temp, target_pwm, current_watts)
+                next_state = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
+                rl.train_step(next_state, reward)
+                
+                # Check for brain reset request
+                if os.path.exists("/tmp/thermal_rl_reset.flag"):
+                    rl.reset_brain()
+                    os.remove("/tmp/thermal_rl_reset.flag")
+                    log.info("[RL] Brain reset! Fresh PPO weights initialized.")
+            except Exception as rl_train_e:
+                log.debug(f"RL training step error: {rl_train_e}")
+            
+            # Online fine-tuning history stack (temperature predictor)
             history.append((feature_queue.copy(), cpu_temp))
             if len(history) >= ONLINE_LEARN_INTERVAL + SEQ_LENGTH:
                 old_seq, _ = history[-ONLINE_LEARN_INTERVAL]
@@ -334,7 +394,7 @@ def run():
                     if len(history) > 1000:
                         history = history[-500:]
             
-            log.info(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | Power: {current_watts:.1f}W | Pred: {predicted_temp:.1f}C -> PWM: {target_pwm}")
+            log.info(f"Brain Metric -> PageFaults: {mem_velocity} | CPU: {cpu_temp:.1f}C | Power: {current_watts:.1f}W | Pred: {predicted_temp:.1f}C -> PWM: {target_pwm} | RL Reward: {rl.metrics.get('reward', 0):.3f}")
             time.sleep(0.5)
             
     except KeyboardInterrupt:

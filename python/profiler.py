@@ -97,6 +97,10 @@ def record_data():
     
     log.info("Beginning 1.0HZ Background Data Collection... Press Ctrl+C to stop.")
     
+    # Session replay recording (Option B)
+    session_buffer = []
+    session_id = int(time.time())
+    
     # Initial psutil call to baseline cpu_percent
     psutil.cpu_percent()
     
@@ -116,6 +120,33 @@ def record_data():
             c.execute("INSERT INTO thermal_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
                       (timestamp, cpu_temp, process_velocity, fan_rpm, target_pwm, gpu_temp, power_watts))
             conn.commit()
+            
+            # Session recording for replay (Option B)
+            session_frame = {
+                "t": round(timestamp, 2),
+                "cpu": round(cpu_temp, 1),
+                "gpu": round(gpu_temp, 1),
+                "pwm": target_pwm,
+                "watts": round(power_watts, 1),
+                "rpm": fan_rpm,
+                "app": top_proc_name if 'top_proc_name' in dir() else "idle"
+            }
+            session_buffer.append(session_frame)
+            
+            # Flush session to disk every 60 frames (~1 minute)
+            if len(session_buffer) >= 60:
+                try:
+                    session_dir = "/tmp/thermal_sessions"
+                    os.makedirs(session_dir, exist_ok=True)
+                    session_file = os.path.join(session_dir, f"session_{session_id}.json")
+                    with open(session_file, "w") as sf:
+                        json.dump(session_buffer, sf)
+                except: pass
+            
+            # Start a new session file every 10 minutes (600 frames)
+            if len(session_buffer) >= 600:
+                session_buffer = []
+                session_id = int(time.time())
             
             time.sleep(1.0)
     except KeyboardInterrupt:

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LineChart, Line } from 'recharts';
-import { History, Cpu, Activity, Settings, Zap, Power, Disc, Thermometer, Wind, Shield, BrainCircuit, SlidersHorizontal, AlertTriangle, Radio, Gauge, Clock, TrendingDown, Layers, Stethoscope, HeartPulse } from 'lucide-react';
+import { History, Cpu, Activity, Settings, Zap, Power, Disc, Thermometer, Wind, Shield, BrainCircuit, SlidersHorizontal, AlertTriangle, Radio, Gauge, Clock, TrendingDown, Layers, Stethoscope, HeartPulse, FlaskConical, Bell, Play } from 'lucide-react';
 import { fetchHistoricData, fetchCapabilities } from './api';
 import './App.css';
 
@@ -61,6 +61,10 @@ export default function App() {
   const [targetGpuWatts, setTargetGpuWatts] = useState(0);
   const [targetVoltageOffset, setTargetVoltageOffset] = useState(0);
 
+  const [onBattery, setOnBattery] = useState(false);
+  const [acousticMode, setAcousticMode] = useState(false);
+  const [cryoBoost, setCryoBoost] = useState(false);
+
   // ── Active Profile ──
   const [activeProfile, setActiveProfile] = useState({ app: 'idle', mode: 'default', cpu_usage: 0 });
 
@@ -116,6 +120,20 @@ export default function App() {
     const interval = setInterval(fetchProfile, 2000);
     fetchProfile();
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const fetchContext = () => {
+      fetch('http://localhost:8889/doctor/prescription')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') setOnBattery(data.on_battery);
+        })
+        .catch(() => {});
+    };
+    fetchContext();
+    const intv = setInterval(fetchContext, 5000);
+    return () => clearInterval(intv);
   }, []);
 
   // ── WebSocket Connection ──
@@ -296,6 +314,8 @@ export default function App() {
             <SidebarBtn icon={BrainCircuit} active={page === 'algo'} color="purple" onClick={() => setPage('algo')} title="Algorithm Activity" />
             <div className="w-6 h-px bg-white/5 mx-auto" />
             <SidebarBtn icon={Stethoscope} active={page === 'diagnostics'} color="orange" onClick={() => setPage('diagnostics')} title="Health Diagnostics" />
+            <SidebarBtn icon={FlaskConical} active={page === 'ailab'} color="purple" onClick={() => setPage('ailab')} title="AI Lab" />
+            <SidebarBtn icon={Bell} active={page === 'alerts'} color="teal" onClick={() => setPage('alerts')} title="Alert Center" />
           </div>
           <SidebarBtn icon={Power} className="hover:!text-red-400" title="Shutdown" />
         </aside>
@@ -313,6 +333,8 @@ export default function App() {
             chartData={chartData} predictedTemp={predictedTemp}
             heartbeatAge={heartbeatAge} capabilities={capabilities}
             targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset}
+            acousticMode={acousticMode} setAcousticMode={setAcousticMode}
+            cryoBoost={cryoBoost} setCryoBoost={setCryoBoost} onBattery={onBattery}
           />}
 
           {page === 'cpu' && <CpuPage coreTemps={coreTemps} cpuTemp={cpuTemp} gpuTemp={gpuTemp} watts={watts} data={data} isOnline={isOnline} status={status} />}
@@ -335,6 +357,10 @@ export default function App() {
 
           {page === 'diagnostics' && <DiagnosticsPage isOnline={isOnline} status={status} />}
 
+          {page === 'ailab' && <AILabPage isOnline={isOnline} status={status} />}
+
+          {page === 'alerts' && <AlertsPage isOnline={isOnline} status={status} />}
+
         </main>
       </div>
     </div>
@@ -344,18 +370,33 @@ export default function App() {
 // ══════════════════════════════════════════════
 // ██  PAGE: DASHBOARD (main overview)
 // ══════════════════════════════════════════════
-function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset }) {
+function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset, acousticMode, setAcousticMode, cryoBoost, setCryoBoost, onBattery }) {
   return (
     <>
       {/* Header */}
       <header className="flex justify-between items-start animate-slide-in">
         <div>
-          <h1 className="text-2xl font-black text-white tracking-tight leading-none">Adaptive Thermal Node</h1>
+          <h1 className="text-2xl font-black text-white tracking-tight leading-none flex items-center gap-3">
+            Adaptive Thermal Node
+            {onBattery && <span className="bg-orange-500/20 text-orange-400 border border-orange-500/30 px-3 py-1 rounded-full text-[10px] uppercase tracking-widest flex items-center gap-2"><Zap size={10} /> Battery Saver Active</span>}
+          </h1>
           <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase mt-1.5 flex items-center gap-2">
             <StatusDot online={isOnline} /> Hardware Link: {status}
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button 
+            onClick={() => {
+              fetch('http://localhost:8889/action/cryoboost', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration: 30 }) })
+              .then(() => setCryoBoost(true));
+              setTimeout(() => setCryoBoost(false), 30000);
+            }}
+            className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all shadow-[0_0_20px_rgba(56,189,248,0.2)] ${
+              cryoBoost ? 'bg-cyan-500 text-white border-cyan-400 animate-pulse' : 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20'
+            }`}
+          >
+            {cryoBoost ? '❄ Purging Heat...' : '❄ Cryo-Boost'}
+          </button>
           <div className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
             uiLock ? 'bg-orange-500/15 border-orange-500/30 text-orange-400' :
             failsafe ? 'bg-red-500/15 border-red-500/30 text-red-400' :
@@ -379,24 +420,48 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
       {/* Main Grid */}
       <div className="grid grid-cols-12 gap-4 flex-1 min-h-0 animate-slide-in" style={{ animationDelay: '100ms' }}>
 
-        {/* Thermal Map */}
-        <div className="col-span-4 glass-panel p-5 flex flex-col">
-          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
-            <Thermometer size={11} className="text-blue-400/60" /> 8-Core Thermal Map
+        {/* 3D Isometric Thermal Map */}
+        <div className="col-span-4 glass-panel p-5 flex flex-col overflow-hidden relative">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-8 flex items-center gap-2">
+            <Thermometer size={11} className="text-blue-400/60" /> 3D Core Topology
           </h3>
-          <div className="grid grid-cols-4 gap-2 flex-1">
-            {coreTemps.map((temp, i) => {
-              const hc = getHeatColor(temp);
-              return (
-                <div key={i} className={`rounded-xl bg-gradient-to-br ${hc.bg} border border-white/[0.07] flex flex-col items-center justify-center transition-all duration-700 shadow-lg ${hc.glow} hover:border-white/15 relative overflow-hidden`}>
-                  <div className="absolute inset-0 rounded-xl bg-gradient-to-t from-black/30 to-transparent pointer-events-none" />
-                  <span className={`text-sm font-black mono ${hc.text} relative z-10`}>{temp.toFixed(1)}°</span>
-                  <span className="text-[7px] font-bold text-white/30 uppercase tracking-widest relative z-10 mt-0.5">C{i}</span>
-                </div>
-              );
-            })}
+          
+          <div className="flex-1 flex items-center justify-center pt-8">
+            <div 
+              className="grid grid-cols-4 gap-3 transition-all duration-[2000ms] ease-out"
+              style={{
+                transform: 'perspective(1000px) rotateX(55deg) rotateZ(-45deg)',
+                transformStyle: 'preserve-3d'
+              }}
+            >
+              {coreTemps.map((temp, i) => {
+                const hc = getHeatColor(temp);
+                // Calculate dynamic height based on temp (e.g. 30C -> 10px, 90C -> 60px)
+                const zHeight = Math.max(10, (temp - 30) * 1.2);
+                
+                return (
+                  <div 
+                    key={i} 
+                    className={`w-12 h-12 rounded-lg bg-gradient-to-br ${hc.bg} border border-white/[0.15] flex flex-col items-center justify-center transition-all duration-700 shadow-xl relative`}
+                    style={{
+                      transform: `translateZ(${zHeight}px)`,
+                      transformStyle: 'preserve-3d',
+                      boxShadow: `inset 0 0 10px rgba(255,255,255,0.1), -10px 10px 20px rgba(0,0,0,0.5)`
+                    }}
+                  >
+                    {/* 3D "Walls" for depth illusion */}
+                    <div className={`absolute top-full left-0 w-full origin-top transform rotate-x-[-90deg] bg-black/40 border border-white/5 rounded-b-lg transition-all duration-700`} style={{ height: `${zHeight}px` }} />
+                    <div className={`absolute top-0 left-full h-full origin-left transform rotate-y-[90deg] bg-black/60 border border-white/5 rounded-r-lg transition-all duration-700`} style={{ width: `${zHeight}px` }} />
+                    
+                    <span className={`text-[10px] font-black mono ${hc.text} relative z-10`}>{temp.toFixed(0)}°</span>
+                    <span className="text-[6px] font-bold text-white/40 uppercase tracking-widest relative z-10">C{i}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div className="mt-3 flex items-center justify-between text-[9px] text-white/20">
+          
+          <div className="mt-8 flex items-center justify-between text-[9px] text-white/20 relative z-20">
             <span>Avg: <span className="mono text-white/40">{avgTemp.toFixed(1)}°C</span></span>
             <span>Max: <span className="mono text-white/40">{Math.max(...coreTemps).toFixed(1)}°C</span></span>
           </div>
@@ -404,7 +469,7 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
 
         {/* Control Authority & Hardware Limits */}
         <div className="col-span-4 flex flex-col gap-4">
-          <ControlPanel uiLock={uiLock} manualPwm={manualPwm} handleSlider={handleSlider} releaseOverride={releaseOverride} engageManual={engageManual} confidence={confidence} currentPwm={currentPwm} />
+          <ControlPanel uiLock={uiLock} manualPwm={manualPwm} handleSlider={handleSlider} releaseOverride={releaseOverride} engageManual={engageManual} confidence={confidence} currentPwm={currentPwm} acousticMode={acousticMode} setAcousticMode={setAcousticMode} />
           
           <HardwareLimitsPanel capabilities={capabilities} targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset} />
         </div>
@@ -701,7 +766,7 @@ function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidenc
 // ██  SHARED COMPONENTS
 // ══════════════════════════════════════════════
 
-function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engageManual, confidence }) {
+function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engageManual, confidence, acousticMode, setAcousticMode }) {
   return (
     <div className={`glass-panel p-5 h-full flex flex-col transition-all duration-500 ${
       uiLock ? 'border-orange-500/30 shadow-[0_0_30px_rgba(249,115,22,0.08)]' : 'border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.05)]'
@@ -722,6 +787,19 @@ function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engage
             uiLock ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40 shadow-[0_0_16px_rgba(249,115,22,0.15)]' : 'bg-white/[0.02] text-white/20 border border-white/[0.04] hover:bg-white/[0.04]'
           }`}>
           <SlidersHorizontal size={14} /> Manual
+        </button>
+      </div>
+
+      <div className="mb-5">
+        <button onClick={() => {
+            const nextState = !acousticMode;
+            fetch('http://localhost:8889/config/acoustic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: nextState }) })
+            .then(() => setAcousticMode(nextState));
+          }}
+          className={`w-full py-2.5 rounded-xl text-[9px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 border ${
+            acousticMode ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-[0_0_16px_rgba(168,85,247,0.15)]' : 'bg-white/[0.02] text-white/20 border-white/[0.04] hover:bg-white/[0.04]'
+          }`}>
+          <Wind size={12} /> {acousticMode ? 'Acoustic Smoothing: ON' : 'Acoustic Smoothing: OFF'}
         </button>
       </div>
 
@@ -923,6 +1001,7 @@ function MetricRow({ label, value, color = 'blue' }) {
 function DiagnosticsPage({ isOnline, status }) {
   const [diagState, setDiagState] = useState({ status: 'idle', progress: 0, data_points: [], score: 0, message: '' });
   const [history, setHistory] = useState([]);
+  const [prescription, setPrescription] = useState("Awaiting diagnosis...");
 
   const fetchStatus = useCallback(() => {
     fetch('http://localhost:8889/diagnostics/status')
@@ -942,6 +1021,20 @@ function DiagnosticsPage({ isOnline, status }) {
     }
     return () => clearInterval(interval);
   }, [diagState.status, fetchStatus]);
+
+  useEffect(() => {
+    const fetchPrescription = () => {
+      fetch('http://localhost:8889/doctor/prescription')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') setPrescription(data.prescription);
+        })
+        .catch(() => {});
+    };
+    fetchPrescription();
+    const intv = setInterval(fetchPrescription, 2000);
+    return () => clearInterval(intv);
+  }, []);
 
   const startScan = () => {
     fetch('http://localhost:8889/diagnostics/start', { method: 'POST' })
@@ -1036,6 +1129,16 @@ function DiagnosticsPage({ isOnline, status }) {
                 </div>
               )}
             </div>
+
+            {/* Doctor's Notes NLP */}
+            <div className="glass-panel p-5 animate-slide-in" style={{ animationDelay: '150ms' }}>
+              <h3 className="text-[9px] font-black tracking-[0.25em] text-emerald-400/60 uppercase mb-3 flex items-center gap-2">
+                <Activity size={11} /> Doctor's Prescription
+              </h3>
+              <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-4">
+                <p className="text-[11px] text-emerald-300/80 leading-relaxed font-sans">{prescription}</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1057,6 +1160,289 @@ function DiagnosticsPage({ isOnline, status }) {
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center text-white/10 font-black tracking-widest text-xs uppercase">No Medical History Found</div>
+            )}
+          </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════
+// ██  PAGE: AI LAB (Training Observatory)
+// ══════════════════════════════════════════════
+function AILabPage({ isOnline, status }) {
+  const [metrics, setMetrics] = useState({ actor_loss: 0, critic_loss: 0, reward: 0, entropy: 0, steps: 0 });
+  const [metricsHistory, setMetricsHistory] = useState([]);
+
+  useEffect(() => {
+    const fetchMetrics = () => {
+      fetch('http://localhost:8889/ai/metrics')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') {
+            setMetrics(data.data);
+            setMetricsHistory(prev => {
+              const next = [...prev, { 
+                step: data.data.steps,
+                actor: parseFloat(data.data.actor_loss?.toFixed(6) || 0),
+                critic: parseFloat(data.data.critic_loss?.toFixed(6) || 0),
+                reward: parseFloat(data.data.reward?.toFixed(4) || 0),
+                entropy: parseFloat(data.data.entropy?.toFixed(4) || 0)
+              }];
+              return next.slice(-200); // keep last 200 data points
+            });
+          }
+        })
+        .catch(() => {});
+    };
+    fetchMetrics();
+    const intv = setInterval(fetchMetrics, 1000);
+    return () => clearInterval(intv);
+  }, []);
+
+  const resetBrain = () => {
+    fetch('http://localhost:8889/ai/reset', { method: 'POST' })
+      .then(() => { setMetricsHistory([]); })
+      .catch(() => {});
+  };
+
+  return (
+    <>
+      <header className="animate-slide-in">
+        <h1 className="text-2xl font-black text-white tracking-tight leading-none flex items-center gap-3">
+          AI Training Observatory
+          <span className="bg-purple-500/20 text-purple-400 border border-purple-500/30 px-3 py-1 rounded-full text-[10px] uppercase tracking-widest">
+            Step #{metrics.steps}
+          </span>
+        </h1>
+        <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase mt-1.5 flex items-center gap-2">
+          <StatusDot online={isOnline} /> {status} — Watch the neural network learn in real-time
+        </p>
+      </header>
+
+      {/* Metric Cards */}
+      <div className="grid grid-cols-4 gap-3 animate-slide-in" style={{ animationDelay: '50ms' }}>
+        <div className="glass-panel p-4">
+          <span className="text-[9px] text-white/30 uppercase tracking-widest block">Actor Loss</span>
+          <span className="text-xl font-black mono text-blue-400">{metrics.actor_loss?.toFixed(6) || '0'}</span>
+        </div>
+        <div className="glass-panel p-4">
+          <span className="text-[9px] text-white/30 uppercase tracking-widest block">Critic Loss</span>
+          <span className="text-xl font-black mono text-purple-400">{metrics.critic_loss?.toFixed(6) || '0'}</span>
+        </div>
+        <div className="glass-panel p-4">
+          <span className="text-[9px] text-white/30 uppercase tracking-widest block">Reward Signal</span>
+          <span className={`text-xl font-black mono ${(metrics.reward || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{metrics.reward?.toFixed(4) || '0'}</span>
+        </div>
+        <div className="glass-panel p-4">
+          <span className="text-[9px] text-white/30 uppercase tracking-widest block">Policy Entropy</span>
+          <span className="text-xl font-black mono text-amber-400">{metrics.entropy?.toFixed(4) || '0'}</span>
+        </div>
+      </div>
+
+      {/* Loss Charts */}
+      <div className="grid grid-cols-2 gap-4 flex-1 min-h-0 animate-slide-in" style={{ animationDelay: '100ms' }}>
+        <div className="glass-panel p-5 flex flex-col">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+            <Activity size={11} className="text-blue-400/60" /> Actor Loss Curve
+          </h3>
+          <div className="flex-1 min-h-[200px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={metricsHistory} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                <XAxis dataKey="step" tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 8, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 8, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ backgroundColor: 'rgba(0,0,0,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', fontSize: '10px', fontFamily: 'JetBrains Mono' }} />
+                <Line type="monotone" dataKey="actor" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="glass-panel p-5 flex flex-col">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+            <Activity size={11} className="text-purple-400/60" /> Critic Loss Curve
+          </h3>
+          <div className="flex-1 min-h-[200px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={metricsHistory} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                <XAxis dataKey="step" tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 8, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 8, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ backgroundColor: 'rgba(0,0,0,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', fontSize: '10px', fontFamily: 'JetBrains Mono' }} />
+                <Line type="monotone" dataKey="critic" stroke="#a855f7" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Reward + Entropy Charts */}
+      <div className="grid grid-cols-2 gap-4 animate-slide-in" style={{ animationDelay: '150ms' }}>
+        <div className="glass-panel p-5">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+            <TrendingDown size={11} className="text-emerald-400/60" /> Reward History
+          </h3>
+          <div className="h-40">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={metricsHistory} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
+                <defs><linearGradient id="rewardGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3} /><stop offset="95%" stopColor="#10b981" stopOpacity={0} /></linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                <XAxis dataKey="step" tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 8, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 8, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ backgroundColor: 'rgba(0,0,0,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', fontSize: '10px', fontFamily: 'JetBrains Mono' }} />
+                <Area type="monotone" dataKey="reward" stroke="#10b981" fill="url(#rewardGrad)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="glass-panel p-5 flex flex-col justify-between">
+          <div>
+            <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+              <BrainCircuit size={11} className="text-amber-400/60" /> Neural Network Controls
+            </h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/30">Architecture</span>
+                <span className="mono text-[10px] text-white/60">Actor-Critic PPO (7D)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/30">Actor LR</span>
+                <span className="mono text-[10px] text-blue-400">3e-4</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/30">Critic LR</span>
+                <span className="mono text-[10px] text-purple-400">1e-3</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/30">γ (discount)</span>
+                <span className="mono text-[10px] text-white/60">0.99</span>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={resetBrain}
+            className="mt-4 w-full py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 font-black tracking-widest text-[10px] uppercase transition-colors shadow-[0_0_15px_rgba(239,68,68,0.1)]"
+          >
+            ⚠ Reset Brain (Wipe All Weights)
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════
+// ██  PAGE: ALERTS CENTER
+// ══════════════════════════════════════════════
+function AlertsPage({ isOnline, status }) {
+  const [alerts, setAlerts] = useState([]);
+  const [config, setConfig] = useState({ temp_threshold: 85, enabled: true });
+
+  useEffect(() => {
+    const fetchAlerts = () => {
+      fetch('http://localhost:8889/alerts/history')
+        .then(res => res.json())
+        .then(data => { if (data.status === 'ok') setAlerts(data.data.reverse()); })
+        .catch(() => {});
+    };
+    fetch('http://localhost:8889/alerts/config')
+      .then(res => res.json())
+      .then(data => { if (data.status === 'ok') setConfig(data.data); })
+      .catch(() => {});
+    fetchAlerts();
+    const intv = setInterval(fetchAlerts, 5000);
+    return () => clearInterval(intv);
+  }, []);
+
+  const updateConfig = (newConfig) => {
+    setConfig(newConfig);
+    fetch('http://localhost:8889/alerts/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    }).catch(() => {});
+  };
+
+  return (
+    <>
+      <header className="animate-slide-in">
+        <h1 className="text-2xl font-black text-white tracking-tight leading-none flex items-center gap-3">
+          Alert Center
+          {alerts.length > 0 && <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1 rounded-full text-[10px] uppercase tracking-widest">{alerts.length} Events</span>}
+        </h1>
+        <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase mt-1.5 flex items-center gap-2">
+          <StatusDot online={isOnline} /> {status} — Thermal event monitoring & notifications
+        </p>
+      </header>
+
+      <div className="grid grid-cols-12 gap-5 flex-1 min-h-0 animate-slide-in" style={{ animationDelay: '50ms' }}>
+        {/* Config Panel */}
+        <div className="col-span-4 glass-panel p-6 flex flex-col gap-6">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase flex items-center gap-2">
+            <Settings size={11} className="text-teal-400/60" /> Alert Configuration
+          </h3>
+
+          <div className="space-y-5">
+            <div>
+              <label className="text-[10px] text-white/30 block mb-2">Temperature Threshold (°C)</label>
+              <input
+                type="range" min="60" max="100" value={config.temp_threshold}
+                onChange={(e) => updateConfig({ ...config, temp_threshold: parseInt(e.target.value) })}
+                className="w-full"
+              />
+              <div className="flex justify-between text-[9px] mono text-white/40 mt-1">
+                <span>60°C</span>
+                <span className="text-teal-400 font-bold">{config.temp_threshold}°C</span>
+                <span>100°C</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-white/30">Alerts Enabled</span>
+              <button
+                onClick={() => updateConfig({ ...config, enabled: !config.enabled })}
+                className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all ${
+                  config.enabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-white/[0.02] text-white/20 border-white/[0.04]'
+                }`}
+              >
+                {config.enabled ? 'Active' : 'Disabled'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-white/30">Notification Method</span>
+              <span className="text-[9px] mono text-white/40">Desktop (notify-send)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Alert History Log */}
+        <div className="col-span-8 glass-panel p-5 flex flex-col">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+            <Bell size={11} className="text-red-400/60" /> Event Log
+          </h3>
+          <div className="flex-1 overflow-y-auto thin-scrollbar space-y-2">
+            {alerts.length > 0 ? alerts.map((alert, i) => (
+              <div key={i} className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                alert.severity === 'critical' ? 'bg-red-500/5 border-red-500/15' : 'bg-amber-500/5 border-amber-500/15'
+              }`}>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${alert.severity === 'critical' ? 'bg-red-400 animate-pulse' : 'bg-amber-400'}`} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-[11px] font-bold ${alert.severity === 'critical' ? 'text-red-300' : 'text-amber-300'}`}>{alert.message}</p>
+                  <p className="text-[9px] mono text-white/20">{new Date(alert.timestamp * 1000).toLocaleString()}</p>
+                </div>
+                <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${
+                  alert.severity === 'critical' ? 'text-red-400 border-red-500/20 bg-red-500/10' : 'text-amber-400 border-amber-500/20 bg-amber-500/10'
+                }`}>{alert.severity}</span>
+              </div>
+            )) : (
+              <div className="flex-1 flex items-center justify-center text-white/10 font-black tracking-widest text-sm uppercase">
+                No thermal alerts recorded
+              </div>
             )}
           </div>
         </div>
