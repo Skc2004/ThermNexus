@@ -71,6 +71,10 @@ impl GhostLink {
         self.volatile_read_i32(116)
     }
 
+    pub fn get_target_voltage_offset_mv(&self) -> i32 {
+        self.volatile_read_i32(120)
+    }
+
     pub fn get_last_heartbeat(&self) -> i64 {
         self.volatile_read_i64(8)
     }

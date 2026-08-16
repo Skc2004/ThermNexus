@@ -200,6 +200,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             write_i64(path, target_khz);
                         }
                     }
+                    
+                    let target_voltage_offset_mv = ghost_link.get_target_voltage_offset_mv();
+                    if target_voltage_offset_mv < 0 {
+                        // Strict Bounds: -150mV to 0mV
+                        let clamped_offset = target_voltage_offset_mv.clamp(-150, 0);
+                        if ticks.is_multiple_of(100) { // Log once per second
+                            info!("[MOCK EXECUTION] Dynamic Undervolting: intel-undervolt apply --cpu {}mV", clamped_offset);
+                        }
+                    }
 
                     current_applied_pwm = clamped;
                 }
@@ -211,6 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "target_cpu_freq": ghost_link.get_target_cpu_freq_mhz(),
                 "target_gpu_watts": ghost_link.get_target_gpu_watts(),
                 "target_pl1_watts": ghost_link.get_target_pl1_uw() / 1_000_000,
+                "target_voltage_offset_mv": ghost_link.get_target_voltage_offset_mv().clamp(-150, 0),
                 "heartbeat": last_heartbeat,
                 "failsafe": is_failsafe_triggered,
                 "ui_lock": is_ui_locked,

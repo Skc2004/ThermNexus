@@ -70,6 +70,31 @@ def start_diagnostic():
 def get_diagnostic_status():
     return jsonify({"status": "ok", "data": runner.get_state()})
 
+@app.route("/diagnostics/history", methods=["GET"])
+def get_diagnostic_history():
+    try:
+        import sqlite3
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thermal_profile.db")
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("SELECT timestamp, score, peak_temp, final_temp, dissipation, message FROM diagnostic_history ORDER BY timestamp ASC")
+        rows = c.fetchall()
+        conn.close()
+        
+        history = []
+        for r in rows:
+            history.append({
+                "timestamp": r[0] * 1000,
+                "score": r[1],
+                "peak_temp": r[2],
+                "final_temp": r[3],
+                "dissipation": r[4],
+                "message": r[5]
+            })
+        return jsonify({"status": "ok", "data": history})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/profile/active", methods=["GET"])
 def get_active_profile():
     try:

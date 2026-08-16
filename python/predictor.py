@@ -51,7 +51,7 @@ class GhostLinkWriter:
         self.f = open(self.filename, "r+b")
         self.mm = mmap.mmap(self.f.fileno(), 128, access=mmap.ACCESS_WRITE)
         
-    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0):
+    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0, target_voltage_offset_mv=0):
         now_ms = int(time.time() * 1000)
         self.mm.seek(0)
         
@@ -79,6 +79,10 @@ class GhostLinkWriter:
         # GPU Watts expansion (4 bytes starting at offset 116)
         self.mm.seek(116)
         self.mm.write(struct.pack(">i", int(target_gpu_watts)))
+        
+        # Voltage Offset expansion (4 bytes starting at offset 120)
+        self.mm.seek(120)
+        self.mm.write(struct.pack(">i", int(target_voltage_offset_mv)))
         
         self.mm.flush()  # Force visibility to Rust daemon's mmap
         
@@ -291,7 +295,7 @@ def run():
             # === CONTINUOUS RL ACTOR-CRITIC INFERENCE ===
             state_list = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
             try:
-                target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz = rl.select_action(state_list)
+                target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz, target_voltage_offset_mv = rl.select_action(state_list)
                 target_pl1_uw = int(target_pl1_watts * 1_000_000)
                 
                 # Dynamic Hardware Execution (Python Side)
@@ -303,10 +307,10 @@ def run():
                         
             except Exception as e:
                 log.error(f"RL Agent failed: {e}")
-                target_pwm, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz = 128, 128, 128, 0, 0
+                target_pwm, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_voltage_offset_mv = 128, 128, 128, 0, 0, 0
 
             current_pwm_state = target_pwm
-            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts)
+            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts, target_voltage_offset_mv)
             
             # Online fine-tuning history stack
             history.append((feature_queue.copy(), cpu_temp))

@@ -24,7 +24,7 @@ class ContinuousActor(nn.Module):
 
     def forward(self, state):
         features = self.net(state)
-        # Actions: [CPU_PWM_ratio, Case_PWM_ratio, Pump_PWM_ratio, PL1_Ratio, GPU_PL_Ratio, CPU_Freq_Ratio]
+        # Actions: [CPU_PWM, Case_PWM, Pump_PWM, PL1, GPU_PL, CPU_Freq, Voltage_Offset]
         mu = self.mu(features)
         std = torch.exp(self.log_std).clamp(min=1e-3)
         return mu, std
@@ -47,7 +47,7 @@ class Critic(nn.Module):
 class RLThermalAgent:
     def __init__(self, config):
         self.cfg = config
-        self.actor = ContinuousActor(state_dim=5, action_dim=6)
+        self.actor = ContinuousActor(state_dim=5, action_dim=7)
         self.critic = Critic(state_dim=5)
         
         # Scaling limits
@@ -61,6 +61,9 @@ class RLThermalAgent:
         self.cpu_freq_min = self.cfg.get("rl", {}).get("cpu_freq_min_mhz", 800)
         self.cpu_freq_max = self.cfg.get("rl", {}).get("cpu_freq_max_mhz", 5500)
         
+        self.voltage_min = -150.0 # max undervolt
+        self.voltage_max = 0.0    # default
+        
         self.weights_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "models", "rl_actor_critic.pt"
         )
@@ -68,10 +71,13 @@ class RLThermalAgent:
 
     def load_weights(self):
         if os.path.exists(self.weights_path):
-            checkpoint = torch.load(self.weights_path, weights_only=True)
-            self.actor.load_state_dict(checkpoint['actor'])
-            self.critic.load_state_dict(checkpoint['critic'])
-            print(f"[RL Agent] Loaded weights from {self.weights_path}")
+            try:
+                checkpoint = torch.load(self.weights_path, weights_only=True)
+                self.actor.load_state_dict(checkpoint['actor'])
+                self.critic.load_state_dict(checkpoint['critic'])
+                print(f"[RL Agent] Loaded weights from {self.weights_path}")
+            except Exception as e:
+                print(f"[RL Agent] Failed to load weights (architecture changed?): {e}. Initializing fresh PPO weights.")
         else:
             print("[RL Agent] Initialized fresh untrained PPO weights.")
 
@@ -99,5 +105,6 @@ class RLThermalAgent:
         pl1_watts = self.pl1_min + actions[3] * (self.pl1_max - self.pl1_min)
         gpu_watts = self.gpu_min + actions[4] * (self.gpu_max - self.gpu_min)
         cpu_freq_mhz = int(self.cpu_freq_min + actions[5] * (self.cpu_freq_max - self.cpu_freq_min))
+        voltage_offset_mv = int(self.voltage_min + actions[6] * (self.voltage_max - self.voltage_min))
         
-        return cpu_pwm, case_pwm, pump_pwm, pl1_watts, gpu_watts, cpu_freq_mhz
+        return cpu_pwm, case_pwm, pump_pwm, pl1_watts, gpu_watts, cpu_freq_mhz, voltage_offset_mv

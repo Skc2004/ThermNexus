@@ -17,6 +17,33 @@ class DiagnosticRunner:
         # For safety on arbitrary machines, we default to a safe simulation if stress-ng is missing
         self.has_stress_ng = shutil.which("stress-ng") is not None
         self.db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thermal_profile.db")
+        self._init_history_db()
+
+    def _init_history_db(self):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute('''CREATE TABLE IF NOT EXISTS diagnostic_history
+                         (timestamp REAL, score INT, peak_temp REAL, final_temp REAL, dissipation REAL, message TEXT)''')
+            
+            # Seed mock data if empty (representing 3 months of degradation)
+            c.execute("SELECT COUNT(*) FROM diagnostic_history")
+            if c.fetchone()[0] == 0:
+                now = time.time()
+                day = 86400
+                mock_data = [
+                    (now - (90 * day), 99, 75.0, 42.0, 33.0, "Excellent cooling performance. Thermal paste is pristine."),
+                    (now - (60 * day), 95, 78.0, 45.0, 33.0, "Excellent cooling performance. Thermal paste is pristine."),
+                    (now - (30 * day), 88, 80.0, 48.0, 32.0, "Good cooling performance. Normal wear."),
+                    (now - (15 * day), 82, 82.0, 50.0, 32.0, "Good cooling performance. Normal wear."),
+                    (now - (7 * day),  75, 84.0, 52.0, 32.0, "Fair. Dust buildup detected. Consider cleaning.")
+                ]
+                c.executemany("INSERT INTO diagnostic_history VALUES (?, ?, ?, ?, ?, ?)", mock_data)
+                
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error init diagnostic history: {e}")
 
     def start(self):
         if self.status in ["baseline", "stress", "cooldown"]:
@@ -98,6 +125,16 @@ class DiagnosticRunner:
                 self.score = 40
                 self.message = "Warning: Poor thermal dissipation! Repaste recommended."
                 
+            try:
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute("INSERT INTO diagnostic_history VALUES (?, ?, ?, ?, ?, ?)",
+                          (time.time(), self.score, peak_temp, final_temp, dissipation, self.message))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"Error saving diagnostic history: {e}")
+
             self.status = "complete"
             
         except Exception as e:

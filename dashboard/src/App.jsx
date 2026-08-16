@@ -59,6 +59,7 @@ export default function App() {
   const [targetCpuFreq, setTargetCpuFreq] = useState(0);
   const [targetPl1, setTargetPl1] = useState(0);
   const [targetGpuWatts, setTargetGpuWatts] = useState(0);
+  const [targetVoltageOffset, setTargetVoltageOffset] = useState(0);
 
   // ── Active Profile ──
   const [activeProfile, setActiveProfile] = useState({ app: 'idle', mode: 'default', cpu_usage: 0 });
@@ -157,6 +158,7 @@ export default function App() {
           if (p.target_cpu_freq !== undefined) setTargetCpuFreq(p.target_cpu_freq);
           if (p.target_pl1_watts !== undefined) setTargetPl1(p.target_pl1_watts);
           if (p.target_gpu_watts !== undefined) setTargetGpuWatts(p.target_gpu_watts);
+          if (p.target_voltage_offset_mv !== undefined) setTargetVoltageOffset(p.target_voltage_offset_mv);
 
           // Heartbeat age tracking
           if (p.heartbeat) {
@@ -310,7 +312,7 @@ export default function App() {
             releaseOverride={releaseOverride} engageManual={engageManual}
             chartData={chartData} predictedTemp={predictedTemp}
             heartbeatAge={heartbeatAge} capabilities={capabilities}
-            targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts}
+            targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset}
           />}
 
           {page === 'cpu' && <CpuPage coreTemps={coreTemps} cpuTemp={cpuTemp} gpuTemp={gpuTemp} watts={watts} data={data} isOnline={isOnline} status={status} />}
@@ -342,7 +344,7 @@ export default function App() {
 // ══════════════════════════════════════════════
 // ██  PAGE: DASHBOARD (main overview)
 // ══════════════════════════════════════════════
-function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts }) {
+function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset }) {
   return (
     <>
       {/* Header */}
@@ -404,7 +406,7 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
         <div className="col-span-4 flex flex-col gap-4">
           <ControlPanel uiLock={uiLock} manualPwm={manualPwm} handleSlider={handleSlider} releaseOverride={releaseOverride} engageManual={engageManual} confidence={confidence} currentPwm={currentPwm} />
           
-          <HardwareLimitsPanel capabilities={capabilities} targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} />
+          <HardwareLimitsPanel capabilities={capabilities} targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset} />
         </div>
 
         {/* Right Column */}
@@ -762,7 +764,7 @@ function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engage
   );
 }
 
-function HardwareLimitsPanel({ capabilities, targetCpuFreq, targetPl1, targetGpuWatts }) {
+function HardwareLimitsPanel({ capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset }) {
   return (
     <div className="glass-panel p-5 animate-fade-in flex-1">
       <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
@@ -791,6 +793,17 @@ function HardwareLimitsPanel({ capabilities, targetCpuFreq, targetPl1, targetGpu
           </div>
           <div className="h-1.5 w-full bg-white/[0.04] rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-orange-500/80 to-amber-400/80 rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(249,115,22,0.4)]" style={{ width: `${Math.min((targetPl1 / 150) * 100, 100)}%` }} />
+          </div>
+        </div>
+
+        {/* Dynamic Voltage Offset */}
+        <div className="space-y-1.5">
+          <div className="flex justify-between items-end">
+            <span className="text-[9px] font-bold text-purple-400/80 tracking-widest uppercase">V-Offset</span>
+            <span className="mono text-[11px] font-black text-purple-300">{targetVoltageOffset} <span className="text-[8px] text-purple-500/50 font-sans">mV</span></span>
+          </div>
+          <div className="h-1.5 w-full bg-white/[0.04] rounded-full overflow-hidden flex justify-end">
+            <div className="h-full bg-gradient-to-l from-purple-500/80 to-pink-400/80 rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(168,85,247,0.4)]" style={{ width: `${Math.min((Math.abs(targetVoltageOffset) / 150) * 100, 100)}%` }} />
           </div>
         </div>
 
@@ -909,6 +922,7 @@ function MetricRow({ label, value, color = 'blue' }) {
 // ══════════════════════════════════════════════
 function DiagnosticsPage({ isOnline, status }) {
   const [diagState, setDiagState] = useState({ status: 'idle', progress: 0, data_points: [], score: 0, message: '' });
+  const [history, setHistory] = useState([]);
 
   const fetchStatus = useCallback(() => {
     fetch('http://localhost:8889/diagnostics/status')
@@ -933,6 +947,21 @@ function DiagnosticsPage({ isOnline, status }) {
     fetch('http://localhost:8889/diagnostics/start', { method: 'POST' })
       .then(() => fetchStatus());
   };
+
+  useEffect(() => {
+    fetch('http://localhost:8889/diagnostics/history')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok') {
+          const formatted = data.data.map(d => ({
+            ...d,
+            dateStr: new Date(d.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          }));
+          setHistory(formatted);
+        }
+      })
+      .catch(() => {});
+  }, [diagState.status]);
 
   return (
     <>
@@ -1007,6 +1036,28 @@ function DiagnosticsPage({ isOnline, status }) {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* ── Paste Degradation Timeline ── */}
+        <div className="glass-panel p-5 mt-2 animate-slide-in" style={{ animationDelay: '100ms' }}>
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+            <History size={11} className="text-purple-400/60" /> Paste Degradation Timeline (Medical History)
+          </h3>
+          <div className="h-40 w-full">
+            {history.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={history} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                  <XAxis dataKey="dateStr" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ backgroundColor: 'rgba(0,0,0,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px' }} />
+                  <Bar dataKey="score" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-white/10 font-black tracking-widest text-xs uppercase">No Medical History Found</div>
+            )}
           </div>
         </div>
       </div>
