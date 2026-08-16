@@ -10,10 +10,10 @@ impl GhostLink {
     pub fn new(path: &str) -> std::io::Result<Self> {
         let file_path = Path::new(path);
         
-        // Expand to 96 bytes for multi-core thermal mapping
+        // Expand to 128 bytes for multi-core thermal mapping and circuit-level control
         if !file_path.exists() {
             let file = std::fs::File::create(file_path)?;
-            file.set_len(96)?;
+            file.set_len(128)?;
         }
         
         let file = OpenOptions::new()
@@ -21,7 +21,7 @@ impl GhostLink {
             .write(true)
             .open(file_path)?;
 
-        let mmap = unsafe { MmapOptions::new().len(96).map_mut(&file)? };
+        let mmap = unsafe { MmapOptions::new().len(128).map_mut(&file)? };
 
         Ok(GhostLink { mmap })
     }
@@ -49,6 +49,26 @@ impl GhostLink {
 
     pub fn get_target_pwm(&self) -> i32 {
         self.volatile_read_i32(4)
+    }
+
+    pub fn get_target_pwm_case(&self) -> i32 {
+        self.volatile_read_i32(96)
+    }
+
+    pub fn get_target_pwm_pump(&self) -> i32 {
+        self.volatile_read_i32(100)
+    }
+
+    pub fn get_target_pl1_uw(&self) -> i64 {
+        self.volatile_read_i64(104)
+    }
+
+    pub fn get_target_cpu_freq_mhz(&self) -> i32 {
+        self.volatile_read_i32(112)
+    }
+
+    pub fn get_target_gpu_watts(&self) -> i32 {
+        self.volatile_read_i32(116)
     }
 
     pub fn get_last_heartbeat(&self) -> i64 {
@@ -103,7 +123,7 @@ mod tests {
         let _gl = GhostLink::new(path).unwrap();
         assert!(Path::new(path).exists());
         let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 96);
+        assert_eq!(meta.len(), 128);
     }
 
     #[test]

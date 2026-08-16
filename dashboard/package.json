@@ -10,6 +10,10 @@
     "directories": {
       "output": "release"
     },
+    "files": [
+      "dist/**/*",
+      "main.js"
+    ],
     "linux": {
       "target": "AppImage",
       "category": "Utility"

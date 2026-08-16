@@ -27,9 +27,27 @@ struct Args {
 
     #[arg(short, long, default_value = "/tmp/hwmon_mock/hwmon0/pwm1_enable")]
     enable: String,
+
+    #[arg(long, default_value = "")]
+    pwm_case: String,
+
+    #[arg(long, default_value = "")]
+    pwm_pump: String,
+
+    #[arg(long, default_value = "")]
+    pl1_rapl: String,
 }
 
 fn write_pwm(path: &str, value: i32) {
+    if path.is_empty() { return; }
+    if let Ok(mut file) = OpenOptions::new().write(true).open(path) {
+        let content = format!("{}\n", value);
+        let _ = file.write_all(content.as_bytes());
+    }
+}
+
+fn write_i64(path: &str, value: i64) {
+    if path.is_empty() { return; }
     if let Ok(mut file) = OpenOptions::new().write(true).open(path) {
         let content = format!("{}\n", value);
         let _ = file.write_all(content.as_bytes());
@@ -64,6 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_clone = Arc::clone(&state);
     
     let pwm_path = args.pwm.clone();
+    let pwm_case_path = args.pwm_case.clone();
+    let pwm_pump_path = args.pwm_pump.clone();
+    let pl1_path = args.pl1_rapl.clone();
     let enable_path = args.enable.clone();
     let ghostlink_path = args.ghostlink.clone();
 
@@ -93,6 +114,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Seize HW control to custom mode natively 
         write_pwm(&enable_path, 1);
         info!("GhostLink Memory Pool established natively. Syscall loop firing at 100Hz.");
+        
+        // Discover CPU scaling frequency paths
+        let mut cpufreq_paths = Vec::new();
+        if let Ok(entries) = std::fs::read_dir("/sys/devices/system/cpu/cpufreq/") {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        if entry.file_name().to_string_lossy().starts_with("policy") {
+                            let scaling_path = entry.path().join("scaling_max_freq");
+                            if scaling_path.exists() {
+                                cpufreq_paths.push(scaling_path.to_string_lossy().into_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        info!("Discovered {} cpufreq policy scaling_max_freq paths", cpufreq_paths.len());
         
         let mut interval = time::interval(Duration::from_millis(10)); // 100Hz Main Loop
         let mut ticks: u64 = 0;
@@ -139,6 +178,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let target_pwm = ghost_link.get_target_pwm();
                     let clamped = target_pwm.clamp(0, 255);
                     write_pwm(&pwm_path, clamped);
+                    
+                    let target_case = ghost_link.get_target_pwm_case().clamp(0, 255);
+                    write_pwm(&pwm_case_path, target_case);
+                    
+                    let target_pump = ghost_link.get_target_pwm_pump().clamp(0, 255);
+                    write_pwm(&pwm_pump_path, target_pump);
+                    
+                    let target_pl1 = ghost_link.get_target_pl1_uw();
+                    if target_pl1 > 0 {
+                        // Strict Bounds: 15W (15,000,000 uW) to 150W (150,000,000 uW)
+                        let clamped_pl1 = target_pl1.clamp(15_000_000, 150_000_000);
+                        write_i64(&pl1_path, clamped_pl1);
+                    }
+                    
+                    let target_cpu_freq = ghost_link.get_target_cpu_freq_mhz();
+                    if target_cpu_freq > 0 && !cpufreq_paths.is_empty() {
+                        // The scaling_max_freq file expects KHz (MHz * 1000)
+                        let target_khz = (target_cpu_freq as i64) * 1000;
+                        for path in &cpufreq_paths {
+                            write_i64(path, target_khz);
+                        }
+                    }
+
                     current_applied_pwm = clamped;
                 }
             }
@@ -146,6 +208,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Broadcast out over Websockets back to React UI
             let bcast_payload = serde_json::json!({
                 "pwm": current_applied_pwm,
+                "target_cpu_freq": ghost_link.get_target_cpu_freq_mhz(),
+                "target_gpu_watts": ghost_link.get_target_gpu_watts(),
+                "target_pl1_watts": ghost_link.get_target_pl1_uw() / 1_000_000,
                 "heartbeat": last_heartbeat,
                 "failsafe": is_failsafe_triggered,
                 "ui_lock": is_ui_locked,

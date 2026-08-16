@@ -23,7 +23,7 @@ async def test_suite():
     shm_path = "/tmp/thermal_ghostlink.shm"
     if os.path.exists(shm_path):
         size = os.path.getsize(shm_path)
-        log_test("GhostLink Mmap Size Verified", size == 96, f"({size} bytes)")
+        log_test("GhostLink Mmap Size Verified", size == 128, f"({size} bytes)")
     else:
         log_test("GhostLink IPC Verified", False, "File missing")
 

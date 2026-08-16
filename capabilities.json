@@ -1,0 +1,5 @@
+{
+    "can_control_gpu": false,
+    "gpu_type": null,
+    "can_control_dvfs": true
+}

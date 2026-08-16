@@ -70,14 +70,54 @@ def discover_sensors():
             
     return discovery_map
 
+def discover_capabilities():
+    caps = {
+        "can_control_gpu": False,
+        "gpu_type": None,
+        "can_control_dvfs": False
+    }
+    
+    # 1. Check NVIDIA NVML
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        caps["can_control_gpu"] = True
+        caps["gpu_type"] = "nvidia"
+    except Exception:
+        pass
+        
+    # 2. Check AMD GPU if NVIDIA not found
+    if not caps["can_control_gpu"]:
+        amd_paths = glob.glob('/sys/class/drm/card*/device/hwmon/hwmon*/power1_cap')
+        if len(amd_paths) > 0:
+            caps["can_control_gpu"] = True
+            caps["gpu_type"] = "amd"
+            
+    # 3. Check CPU DVFS (cpufreq)
+    if os.path.exists('/sys/devices/system/cpu/cpufreq/'):
+        policies = glob.glob('/sys/devices/system/cpu/cpufreq/policy*')
+        if len(policies) > 0:
+            # Check if we can write to scaling_max_freq
+            test_file = os.path.join(policies[0], 'scaling_max_freq')
+            if os.path.exists(test_file):
+                caps["can_control_dvfs"] = True
+                
+    return caps
+
 if __name__ == '__main__':
     print("Starting Hardware Discovery for ThermalNexus...")
     data = discover_sensors()
+    caps = discover_capabilities()
+    
     with open('thermal_config.json', 'w') as f:
         json.dump(data, f, indent=4)
         
+    with open('capabilities.json', 'w') as f:
+        json.dump(caps, f, indent=4)
+        
     print(f"Discovered {len(data)} hwmon device(s) with sensors.")
     print(f"Map written to thermal_config.json in {os.getcwd()}")
+    print(f"Capabilities written to capabilities.json: {caps}")
     print("\nSummary of discovered hardware:")
     for hw_id, info in data.items():
         print(f"- {hw_id} ({info['name']}): {len(info['temperatures'])} temp sensors, {len(info['pwms'])} PWM controllers")

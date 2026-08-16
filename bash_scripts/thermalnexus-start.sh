@@ -94,5 +94,11 @@ export PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH"
 
 # Execute the Native Electron Dashboard in foreground
 # This becomes the main blocking process
-cd "$PROJECT_DIR/dashboard"
-exec npm run start
+if [ -f "$PROJECT_DIR/bin/ThermalNexus.AppImage" ]; then
+    echo "Launching Native AppImage Dashboard..."
+    exec "$PROJECT_DIR/bin/ThermalNexus.AppImage" --no-sandbox
+else
+    echo "AppImage not found. Falling back to development server..."
+    cd "$PROJECT_DIR/dashboard"
+    exec npm run start
+fi

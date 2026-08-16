@@ -3,6 +3,7 @@ import sqlite3
 import os
 import time
 import config_loader
+from diagnostic_runner import runner
 
 app = Flask(__name__)
 cfg = config_loader.load_config()
@@ -43,6 +44,43 @@ def get_history():
                 "pwm": r[4]
             })
         return jsonify({"status": "ok", "data": payload})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/capabilities", methods=["GET"])
+def get_capabilities():
+    try:
+        caps_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "capabilities.json")
+        with open(caps_path, "r") as f:
+            import json
+            caps = json.load(f)
+        return jsonify({"status": "ok", "data": caps})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/diagnostics/start", methods=["POST"])
+def start_diagnostic():
+    success = runner.start()
+    if success:
+        return jsonify({"status": "ok", "message": "Diagnostic started"})
+    else:
+        return jsonify({"status": "error", "message": "Diagnostic already running or complete"}), 400
+
+@app.route("/diagnostics/status", methods=["GET"])
+def get_diagnostic_status():
+    return jsonify({"status": "ok", "data": runner.get_state()})
+
+@app.route("/profile/active", methods=["GET"])
+def get_active_profile():
+    try:
+        active_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "active_profile.json")
+        if os.path.exists(active_path):
+            with open(active_path, "r") as f:
+                import json
+                data = json.load(f)
+            return jsonify({"status": "ok", "data": data})
+        else:
+            return jsonify({"status": "ok", "data": {"app": "idle", "mode": "default", "cpu_usage": 0.0}})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { History, Cpu, Activity, Settings, Zap, Power, Disc, Thermometer, Wind, Shield, BrainCircuit, SlidersHorizontal, AlertTriangle, Radio, Gauge, Clock, TrendingDown, Layers } from 'lucide-react';
-import { fetchHistoricData } from './api';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LineChart, Line } from 'recharts';
+import { History, Cpu, Activity, Settings, Zap, Power, Disc, Thermometer, Wind, Shield, BrainCircuit, SlidersHorizontal, AlertTriangle, Radio, Gauge, Clock, TrendingDown, Layers, Stethoscope, HeartPulse } from 'lucide-react';
+import { fetchHistoricData, fetchCapabilities } from './api';
 import './App.css';
 
 // ── Helpers ──
@@ -53,6 +53,20 @@ export default function App() {
   const [uiLock, setUiLock] = useState(false);
   const [currentPwm, setCurrentPwm] = useState(0);
   const [failsafe, setFailsafe] = useState(false);
+  const [capabilities, setCapabilities] = useState({ can_control_gpu: false, can_control_dvfs: false });
+
+  // ── Hardware Limits ──
+  const [targetCpuFreq, setTargetCpuFreq] = useState(0);
+  const [targetPl1, setTargetPl1] = useState(0);
+  const [targetGpuWatts, setTargetGpuWatts] = useState(0);
+
+  // ── Active Profile ──
+  const [activeProfile, setActiveProfile] = useState({ app: 'idle', mode: 'default', cpu_usage: 0 });
+
+  // ── Initialization ──
+  useEffect(() => {
+    fetchCapabilities().then(setCapabilities);
+  }, []);
 
   // ── Telemetry ──
   const [cpuTemp, setCpuTemp] = useState(0);
@@ -87,6 +101,21 @@ export default function App() {
       });
     }
   }, [viewMode]);
+
+  // ── Profile Polling ──
+  useEffect(() => {
+    const fetchProfile = () => {
+      fetch('http://localhost:8889/profile/active')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') setActiveProfile(data.data);
+        })
+        .catch(() => {});
+    };
+    const interval = setInterval(fetchProfile, 2000);
+    fetchProfile();
+    return () => clearInterval(interval);
+  }, []);
 
   // ── WebSocket Connection ──
   useEffect(() => {
@@ -125,6 +154,10 @@ export default function App() {
           setPredictedTemp(p.predicted ? parseFloat(p.predicted.toFixed(1)) : 0);
           if (p.core_temps) setCoreTemps(p.core_temps);
 
+          if (p.target_cpu_freq !== undefined) setTargetCpuFreq(p.target_cpu_freq);
+          if (p.target_pl1_watts !== undefined) setTargetPl1(p.target_pl1_watts);
+          if (p.target_gpu_watts !== undefined) setTargetGpuWatts(p.target_gpu_watts);
+
           // Heartbeat age tracking
           if (p.heartbeat) {
             const age = Date.now() - p.heartbeat;
@@ -151,11 +184,13 @@ export default function App() {
           setAlgoLog(prev => {
             const entry = {
               time: new Date().toLocaleTimeString('en-US', { hour12: false }),
-              mode: p.ui_lock ? 'MANUAL' : (p.failsafe ? 'FAILSAFE' : 'AI-MPC'),
+              mode: p.ui_lock ? 'MANUAL' : (p.failsafe ? 'FAILSAFE' : 'AI-RL'),
               pwm: p.pwm,
               cpu: p.cpu_temp ? p.cpu_temp.toFixed(1) : '0',
               pred: p.predicted ? p.predicted.toFixed(1) : '—',
               hbAge: p.heartbeat ? (Date.now() - p.heartbeat) : '—',
+              freq: p.target_cpu_freq || '—',
+              gpuW: p.target_gpu_watts || '—'
             };
             const newLog = [...prev, entry];
             return newLog.slice(-30);
@@ -227,8 +262,14 @@ export default function App() {
       <div className="h-10 w-full flex justify-between items-center px-5 shrink-0 bg-white/[0.015] border-b border-white/[0.04]" style={{ WebkitAppRegion: 'drag' }}>
         <div className="flex gap-3 items-center">
           <div className="w-3.5 h-3.5 rounded-full bg-blue-500/80 shadow-[0_0_10px_rgba(59,130,246,0.7)] border border-blue-400/60" />
-          <span className="text-[10px] font-black tracking-[0.25em] text-white/60">
+          <span className="text-[10px] font-black tracking-[0.25em] text-white/60 flex items-center gap-3">
             THERMNEXUS <span className="text-white/20">// COMMAND CENTER</span>
+            <div className="h-3 w-px bg-white/10 mx-1" />
+            <span className="text-white/40 flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${activeProfile.mode === 'silent' ? 'bg-teal-400/80' : activeProfile.mode === 'performance' ? 'bg-orange-500/80 animate-pulse' : 'bg-blue-400/80'}`} />
+              PROFILE: <span className={activeProfile.mode === 'silent' ? 'text-teal-300' : activeProfile.mode === 'performance' ? 'text-orange-400' : 'text-blue-300'}>{activeProfile.mode.toUpperCase()}</span>
+              {activeProfile.app !== 'idle' && <span className="text-white/20 lowercase text-[8px]">({activeProfile.app})</span>}
+            </span>
           </span>
         </div>
         <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' }}>
@@ -251,6 +292,8 @@ export default function App() {
             <SidebarBtn icon={Cpu} active={page === 'cpu'} color="blue" onClick={() => setPage('cpu')} title="CPU Detail" />
             <SidebarBtn icon={Wind} active={page === 'cooling'} color="teal" onClick={() => setPage('cooling')} title="Cooling & Fan" />
             <SidebarBtn icon={BrainCircuit} active={page === 'algo'} color="purple" onClick={() => setPage('algo')} title="Algorithm Activity" />
+            <div className="w-6 h-px bg-white/5 mx-auto" />
+            <SidebarBtn icon={Stethoscope} active={page === 'diagnostics'} color="orange" onClick={() => setPage('diagnostics')} title="Health Diagnostics" />
           </div>
           <SidebarBtn icon={Power} className="hover:!text-red-400" title="Shutdown" />
         </aside>
@@ -266,7 +309,8 @@ export default function App() {
             manualPwm={manualPwm} handleSlider={handleSlider}
             releaseOverride={releaseOverride} engageManual={engageManual}
             chartData={chartData} predictedTemp={predictedTemp}
-            heartbeatAge={heartbeatAge}
+            heartbeatAge={heartbeatAge} capabilities={capabilities}
+            targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts}
           />}
 
           {page === 'cpu' && <CpuPage coreTemps={coreTemps} cpuTemp={cpuTemp} gpuTemp={gpuTemp} watts={watts} data={data} isOnline={isOnline} status={status} />}
@@ -284,7 +328,10 @@ export default function App() {
             predictedTemp={predictedTemp} cpuTemp={cpuTemp} confidence={confidence}
             heartbeatAge={heartbeatAge} heartbeatRaw={heartbeatRaw}
             currentPwm={currentPwm} isOnline={isOnline} status={status}
+            capabilities={capabilities}
           />}
+
+          {page === 'diagnostics' && <DiagnosticsPage isOnline={isOnline} status={status} />}
 
         </main>
       </div>
@@ -295,7 +342,7 @@ export default function App() {
 // ══════════════════════════════════════════════
 // ██  PAGE: DASHBOARD (main overview)
 // ══════════════════════════════════════════════
-function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge }) {
+function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts }) {
   return (
     <>
       {/* Header */}
@@ -353,9 +400,11 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
           </div>
         </div>
 
-        {/* Control Authority */}
+        {/* Control Authority & Hardware Limits */}
         <div className="col-span-4 flex flex-col gap-4">
           <ControlPanel uiLock={uiLock} manualPwm={manualPwm} handleSlider={handleSlider} releaseOverride={releaseOverride} engageManual={engageManual} confidence={confidence} currentPwm={currentPwm} />
+          
+          <HardwareLimitsPanel capabilities={capabilities} targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} />
         </div>
 
         {/* Right Column */}
@@ -541,7 +590,7 @@ function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, re
 // ══════════════════════════════════════════════
 // ██  PAGE: ALGORITHM ACTIVITY
 // ══════════════════════════════════════════════
-function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidence, heartbeatAge, currentPwm, isOnline, status }) {
+function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidence, heartbeatAge, currentPwm, isOnline, status, capabilities }) {
   const modeColor = uiLock ? 'orange' : failsafe ? 'red' : 'blue';
   const modeLabel = uiLock ? 'MANUAL OVERRIDE' : failsafe ? 'FAILSAFE / BIOS' : 'AI PREDICTIVE (MPC)';
 
@@ -620,18 +669,22 @@ function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidenc
                 <th className="pb-2 pr-4 font-bold">PWM</th>
                 <th className="pb-2 pr-4 font-bold">CPU°C</th>
                 <th className="pb-2 pr-4 font-bold">Pred°C</th>
-                <th className="pb-2 font-bold">HB (ms)</th>
+                <th className="pb-2 pr-4 font-bold">HB (ms)</th>
+                {capabilities.can_control_dvfs && <th className="pb-2 pr-4 font-bold text-teal-400/60">Freq (MHz)</th>}
+                {capabilities.can_control_gpu && <th className="pb-2 font-bold text-emerald-400/60">GPU (W)</th>}
               </tr>
             </thead>
             <tbody>
               {[...algoLog].reverse().map((entry, i) => (
                 <tr key={i} className={`border-b border-white/[0.02] ${i === 0 ? 'text-white/60' : 'text-white/25'}`}>
                   <td className="py-1.5 pr-4">{entry.time}</td>
-                  <td className={`py-1.5 pr-4 font-bold ${entry.mode === 'AI-MPC' ? 'text-blue-400/70' : entry.mode === 'MANUAL' ? 'text-orange-400/70' : 'text-red-400/70'}`}>{entry.mode}</td>
+                  <td className={`py-1.5 pr-4 font-bold ${entry.mode === 'AI-RL' ? 'text-blue-400/70' : entry.mode === 'MANUAL' ? 'text-orange-400/70' : 'text-red-400/70'}`}>{entry.mode}</td>
                   <td className="py-1.5 pr-4">{entry.pwm}</td>
                   <td className="py-1.5 pr-4">{entry.cpu}</td>
                   <td className="py-1.5 pr-4">{entry.pred}</td>
-                  <td className={`py-1.5 ${parseInt(entry.hbAge) > 2000 ? 'text-red-400' : ''}`}>{entry.hbAge}</td>
+                  <td className={`py-1.5 pr-4 ${parseInt(entry.hbAge) > 2000 ? 'text-red-400' : ''}`}>{entry.hbAge}</td>
+                  {capabilities.can_control_dvfs && <td className="py-1.5 pr-4 text-teal-400/80">{entry.freq}</td>}
+                  {capabilities.can_control_gpu && <td className="py-1.5 text-emerald-400/80">{entry.gpuW}</td>}
                 </tr>
               ))}
             </tbody>
@@ -704,6 +757,56 @@ function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engage
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function HardwareLimitsPanel({ capabilities, targetCpuFreq, targetPl1, targetGpuWatts }) {
+  return (
+    <div className="glass-panel p-5 animate-fade-in flex-1">
+      <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
+        <Zap size={11} className="text-teal-400/60" /> Hardware AI Limits
+      </h3>
+      <div className="flex flex-col justify-center h-full gap-5">
+        
+        {/* CPU Frequency */}
+        {capabilities.can_control_dvfs && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-end">
+              <span className="text-[9px] font-bold text-teal-400/80 tracking-widest uppercase">CPU Freq</span>
+              <span className="mono text-[11px] font-black text-teal-300">{targetCpuFreq} <span className="text-[8px] text-teal-500/50 font-sans">MHz</span></span>
+            </div>
+            <div className="h-1.5 w-full bg-white/[0.04] rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-teal-500/80 to-cyan-400/80 rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(20,184,166,0.4)]" style={{ width: `${Math.min((targetCpuFreq / 5500) * 100, 100)}%` }} />
+            </div>
+          </div>
+        )}
+
+        {/* CPU Package Power */}
+        <div className="space-y-1.5">
+          <div className="flex justify-between items-end">
+            <span className="text-[9px] font-bold text-orange-400/80 tracking-widest uppercase">CPU PL1 limit</span>
+            <span className="mono text-[11px] font-black text-orange-300">{targetPl1} <span className="text-[8px] text-orange-500/50 font-sans">W</span></span>
+          </div>
+          <div className="h-1.5 w-full bg-white/[0.04] rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-orange-500/80 to-amber-400/80 rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(249,115,22,0.4)]" style={{ width: `${Math.min((targetPl1 / 150) * 100, 100)}%` }} />
+          </div>
+        </div>
+
+        {/* GPU Power */}
+        {capabilities.can_control_gpu && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-end">
+              <span className="text-[9px] font-bold text-emerald-400/80 tracking-widest uppercase">GPU limit</span>
+              <span className="mono text-[11px] font-black text-emerald-300">{targetGpuWatts} <span className="text-[8px] text-emerald-500/50 font-sans">W</span></span>
+            </div>
+            <div className="h-1.5 w-full bg-white/[0.04] rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-emerald-500/80 to-green-400/80 rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(16,185,129,0.4)]" style={{ width: `${Math.min((targetGpuWatts / 350) * 100, 100)}%` }} />
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
@@ -798,5 +901,115 @@ function MetricRow({ label, value, color = 'blue' }) {
       <span className="text-[10px] text-white/30">{label}</span>
       <span className={`mono text-[11px] font-bold ${textMap[color]}`}>{value}</span>
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// ██  PAGE: DIAGNOSTICS
+// ══════════════════════════════════════════════
+function DiagnosticsPage({ isOnline, status }) {
+  const [diagState, setDiagState] = useState({ status: 'idle', progress: 0, data_points: [], score: 0, message: '' });
+
+  const fetchStatus = useCallback(() => {
+    fetch('http://localhost:8889/diagnostics/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok') setDiagState(data.data);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let interval;
+    if (diagState.status !== 'idle' && diagState.status !== 'complete' && diagState.status !== 'error') {
+      interval = setInterval(fetchStatus, 500);
+    } else {
+      fetchStatus();
+    }
+    return () => clearInterval(interval);
+  }, [diagState.status, fetchStatus]);
+
+  const startScan = () => {
+    fetch('http://localhost:8889/diagnostics/start', { method: 'POST' })
+      .then(() => fetchStatus());
+  };
+
+  return (
+    <>
+      <header className="animate-slide-in">
+        <h1 className="text-2xl font-black text-white tracking-tight leading-none">Thermal Health Diagnostics</h1>
+        <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase mt-1.5 flex items-center gap-2">
+          <StatusDot online={isOnline} /> {status} — Stress Testing & Degradation Analysis
+        </p>
+      </header>
+
+      <div className="flex flex-col gap-5 flex-1 min-h-0 animate-slide-in" style={{ animationDelay: '50ms' }}>
+        <div className="glass-panel p-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-black tracking-widest uppercase mb-1">Stressor Protocol</h2>
+            <p className="text-xs text-white/40">This will lock fans and stress the CPU to 100% for 20 seconds to measure thermal dissipation.</p>
+          </div>
+          <button 
+            onClick={startScan}
+            disabled={diagState.status !== 'idle' && diagState.status !== 'complete' && diagState.status !== 'error'}
+            className="px-6 py-3 bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed border border-orange-500/30 rounded-xl text-orange-400 font-black tracking-widest text-xs uppercase transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(249,115,22,0.15)]"
+          >
+            <Stethoscope size={16} />
+            {diagState.status === 'idle' || diagState.status === 'complete' || diagState.status === 'error' ? 'Initiate Scan' : 'Scanning...'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-12 gap-5 flex-1 min-h-0">
+          <div className="col-span-8 glass-panel p-5 flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase flex items-center gap-2">
+                <Activity size={11} className="text-orange-400/60" /> Thermal Reaction Curve
+              </h3>
+              <span className="mono text-[10px] font-bold text-orange-400/80">{diagState.progress}%</span>
+            </div>
+            
+            <div className="flex-1 min-h-[300px] h-full w-full relative">
+              {diagState.data_points.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={diagState.data_points} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                    <XAxis dataKey="time" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                    <YAxis domain={['auto', 'auto']} tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ backgroundColor: 'rgba(0,0,0,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px' }} />
+                    <Line type="monotone" dataKey="temp" stroke="#f97316" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-white/10 font-black tracking-widest text-sm uppercase">Awaiting Protocol Initialization</div>
+              )}
+            </div>
+          </div>
+
+          <div className="col-span-4 flex flex-col gap-5">
+            <div className="glass-panel p-6 flex-1 flex flex-col justify-center">
+              <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-6 text-center">Medical Report</h3>
+              
+              {diagState.status === 'complete' ? (
+                <div className="flex flex-col items-center animate-fade-in text-center">
+                  <span className={`text-6xl font-black mono mb-2 ${diagState.score > 80 ? 'text-emerald-400' : diagState.score > 50 ? 'text-amber-400' : 'text-red-400'}`}>
+                    {diagState.score}
+                  </span>
+                  <span className="text-[10px] text-white/30 tracking-[0.2em] uppercase font-bold mb-6">Thermal Health Score</span>
+                  
+                  <div className={`p-4 rounded-xl border w-full ${diagState.score > 80 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : diagState.score > 50 ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-red-500/10 border-red-500/20 text-red-300'}`}>
+                    <p className="text-xs font-bold leading-relaxed">{diagState.message}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full opacity-30">
+                  <HeartPulse size={48} className={`mb-4 ${diagState.status !== 'idle' ? 'animate-pulse text-orange-400' : 'text-white'}`} />
+                  <span className="text-[10px] font-bold tracking-widest uppercase">{diagState.status === 'idle' ? 'Ready' : `Phase: ${diagState.status}`}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }

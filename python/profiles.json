@@ -1,0 +1,14 @@
+{
+    "chrome": "silent",
+    "firefox": "silent",
+    "discord": "silent",
+    "spotify": "silent",
+    "code": "balanced",
+    "obs": "balanced",
+    "python": "performance",
+    "node": "performance",
+    "stress-ng": "performance",
+    "rustc": "performance",
+    "cargo": "performance",
+    "cyberpunk": "performance"
+}

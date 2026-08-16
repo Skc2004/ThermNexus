@@ -28,7 +28,7 @@
 
 ## Overview
 
-ThermalNexus predicts CPU heat **5 seconds into the future** by combining kernel-level memory page-fault tracing (eBPF) with a recurrent neural network (PyTorch LSTM). A Rust daemon running at 100 Hz applies Model Predictive Control (MPC) to optimally adjust fan PWM, balancing thermal safety against acoustic comfort. A real-time Electron + React dashboard visualises all telemetry including per-core thermal mapping.
+ThermalNexus predicts CPU heat **5 seconds into the future** by combining kernel-level memory page-fault tracing (eBPF) with a recurrent neural network (PyTorch LSTM). A Rust daemon running at 100 Hz consumes directives from a **Continuous Actor-Critic Reinforcement Learning (RL) agent**, manipulating multi-header fan PWMs and circuit-level Intel RAPL power limits to balance thermal safety against acoustic comfort. A real-time native Electron dashboard visualises all telemetry including per-core thermal mapping.
 
 ### Key Capabilities
 
@@ -36,7 +36,7 @@ ThermalNexus predicts CPU heat **5 seconds into the future** by combining kernel
 |---|---|
 | Predictive thermal model | 2-layer LSTM with online fine-tuning |
 | Kernel observability | eBPF tracepoint on `kmem/mm_page_alloc` |
-| Hardware control | Direct sysfs PWM writes at 100 Hz |
+| Circuit-level control | Direct RAPL PL1 power constraints + multi-PWM |
 | Safety watchdog | 2-second IPC heartbeat timeout → BIOS revert |
 | Per-core telemetry | 8-core temperature array via 96-byte shared memory |
 | GPU monitoring | NVIDIA NVML integration (optional) |
@@ -60,7 +60,7 @@ graph LR
     end
 
     subgraph Python["Python AI Brain"]
-        Predictor["predictor.py<br/>LSTM + MPC"]
+        Predictor["predictor.py<br/>LSTM + RL Actor-Critic"]
         Profiler["profiler.py<br/>SQLite DAQ"]
         API["api_server.py<br/>Flask REST"]
     end
@@ -78,8 +78,8 @@ graph LR
     eBPF -->|page fault velocity| Predictor
     RAPL -->|power watts| Predictor
     HWMON -->|core temps| Predictor
-    Predictor -->|"96-byte mmap<br/>(GhostLink)"| Core
-    Core -->|PWM write| HWMON
+    Predictor -->|"128-byte mmap<br/>(GhostLink)"| Core
+    Core -->|PWM + RAPL write| HWMON
     Core --> WS
     WS -->|JSON 10Hz| React
     React -->|"MANUAL_OVERRIDE<br/>RELEASE_OVERRIDE"| WS
@@ -136,11 +136,11 @@ sequenceDiagram
 
 | File | Role |
 |---|---|
-| `predictor.py` | LSTM inference, MPC optimisation, GhostLink writer, eBPF hook, online fine-tuning |
+| `predictor.py` | LSTM inference, RL Actor-Critic inference, GhostLink writer, eBPF hook, online fine-tuning |
 | `profiler.py` | 1 Hz SQLite data acquisition (CPU temp, GPU temp, power, PWM, fan RPM) |
 | `api_server.py` | Flask REST API on `:8889` serving `/history` endpoint with CORS |
 | `train_model.py` | Offline LSTM training from SQLite dataset |
-| `rl_agent.py` | Experimental offline RL agent (behaviour cloning) |
+| `rl_agent.py` | Continuous PPO Actor-Critic agent for multi-variable control |
 | `mock_hwmon.py` | Virtual sysfs tree at `/tmp/hwmon_mock/` for development |
 | `hardware_discovery.py` | Auto-discovers hwmon sensors and PWM controllers from `/sys/class/hwmon/` |
 | `config_loader.py` | Centralised TOML config parser |
@@ -183,45 +183,51 @@ Features: `[page_fault_velocity, cpu_temp, gpu_temp, power_watts]`
 
 ## GhostLink IPC Protocol
 
-96-byte memory-mapped file (`/tmp/thermal_ghostlink.shm`), big-endian encoding. Written by Python, read by Rust using volatile pointer reads.
+128-byte memory-mapped file (`/tmp/thermal_ghostlink.shm`), big-endian encoding. Written by Python, read by Rust using volatile pointer reads.
 
-```
-┌─────────┬──────┬─────────────────────┬──────────────────────────┐
-│ Offset  │ Type │ Field               │ Description              │
-├─────────┼──────┼─────────────────────┼──────────────────────────┤
-│  0 -  3 │ 4B   │ Magic "GHLK"        │ Protocol identifier      │
-│  4 -  7 │ i32  │ Target PWM          │ MPC-computed fan duty     │
-│  8 - 15 │ i64  │ Heartbeat (ms)      │ Unix epoch milliseconds  │
-│ 16 - 19 │ f32  │ CPU Temp (°C)       │ Average across cores     │
-│ 20 - 23 │ f32  │ GPU Temp (°C)       │ NVML or fallback 40°C    │
-│ 24 - 27 │ f32  │ Power (W)           │ RAPL delta measurement   │
-│ 28 - 31 │ f32  │ Predicted Temp (°C) │ LSTM T_{t+5s} forecast   │
-│ 32 - 63 │ 8×f32│ Per-Core Temps (°C) │ 8 individual core temps  │
-│ 64 - 95 │  —   │ Reserved            │ Future expansion         │
-└─────────┴──────┴─────────────────────┴──────────────────────────┘
+```text
+┌──────────┬──────┬─────────────────────┬──────────────────────────┐
+│ Offset   │ Type │ Field               │ Description              │
+├──────────┼──────┼─────────────────────┼──────────────────────────┤
+│   0 -  3 │ 4B   │ Magic "GHLK"        │ Protocol identifier      │
+│   4 -  7 │ i32  │ Target CPU PWM      │ RL-computed fan duty     │
+│   8 - 15 │ i64  │ Heartbeat (ms)      │ Unix epoch milliseconds  │
+│  16 - 19 │ f32  │ CPU Temp (°C)       │ Average across cores     │
+│  20 - 23 │ f32  │ GPU Temp (°C)       │ NVML or fallback 40°C    │
+│  24 - 27 │ f32  │ Power (W)           │ RAPL delta measurement   │
+│  28 - 31 │ f32  │ Predicted Temp (°C) │ LSTM T_{t+5s} forecast   │
+│  32 - 63 │ 8×f32│ Per-Core Temps (°C) │ 8 individual core temps  │
+│  64 - 95 │  —   │ Reserved Padding    │ Future expansion         │
+│  96 - 99 │ i32  │ Target Case PWM     │ RL-computed case duty    │
+│ 100 - 103│ i32  │ Target Pump PWM     │ RL-computed pump duty    │
+│ 104 - 111│ i64  │ Target PL1 (µW)     │ Intel RAPL power cap     │
+│ 112 - 127│  —   │ Reserved            │ Future expansion         │
+└──────────┴──────┴─────────────────────┴──────────────────────────┘
 ```
 
 ---
 
 ## Control Algorithm
 
-### Model Predictive Control (MPC)
+### Continuous Actor-Critic Reinforcement Learning
 
-The predictor solves a constrained optimisation at each 0.5 s tick:
+The legacy Model Predictive Control static solver has been replaced with a deep Reinforcement Learning agent. At each 0.5 s tick, the PyTorch model evaluates the environment state to dynamically control mechanical (fans) and electrical (RAPL limits) systems simultaneously.
 
-```
-minimise   J(u) = α·(u - u_prev)² + β·max(0, T̂(u) - T_target)²
-subject to  40 ≤ u ≤ 255
+**State Inputs (Size 5):**
+1. `page_fault_velocity` (eBPF kmem allocation rate)
+2. `cpu_temp`
+3. `gpu_temp`
+4. `power_watts`
+5. `predicted_temp` (LSTM T_{t+5s})
 
-where:
-  u         = PWM fan duty cycle (action)
-  T̂(u)     = LSTM_predicted_temp - u/10  (simplified plant model)
-  T_target  = 45°C  (configurable)
-  α = 0.5   = acoustic penalty  (penalises rapid fan changes)
-  β = 20.0  = thermal penalty   (penalises temperature overshoot)
-```
+**Action Outputs (Continuous Space):**
+1. **CPU Fan PWM:** [40..255]
+2. **Case Fan PWM:** [40..255]
+3. **Pump Fan PWM:** [40..255]
+4. **PL1 Power Limit:** [15W..150W]
 
-Solved via `scipy.optimize.minimize` with L-BFGS-B bounds.
+### Hardware Clamping Limits
+The Rust daemon strictly clamps the electrical instructions received from the RL agent before applying them to `/sys/class/powercap/.../energy_uj`. The PL1 limit is hard-bounded between `15,000,000 µW` and `150,000,000 µW` to mathematically prevent the AI from starving the CPU and freezing the kernel.
 
 ### Safety Watchdog State Machine
 
@@ -398,7 +404,7 @@ python python/test_suite.py
 === ThermNexus Integration Test Suite ===
 [PASS] Mock Hardware Dir Exists
 [PASS] Mock Hardware Sensors Initialized
-[PASS] GhostLink Mmap Size Verified (96 bytes)
+[PASS] GhostLink Mmap Size Verified (128 bytes)
 [PASS] WebSocket Server Reachable
 [PASS] Rust IPC -> WebSocket Array Stream (8 Cores)
 [PASS] WebSocket Physics Telemetry Valid

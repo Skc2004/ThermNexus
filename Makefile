@@ -6,7 +6,7 @@ POLKIT_DIR ?= /etc/polkit-1/rules.d
 
 build:
 	cd rust_core && cargo build --release
-	cd dashboard && npm ci && npm run build
+	cd dashboard && npm ci && npm run build && npm run pack
 
 dev:
 	@echo "Start these in separate terminals:"
@@ -18,10 +18,11 @@ dev:
 
 install: build
 	@echo "Installing ThermalNexus to $(PREFIX)..."
-	sudo mkdir -p $(PREFIX)/{bin,config,python,dashboard}
+	sudo mkdir -p $(PREFIX)/{bin,config,python}
 	sudo cp rust_core/target/release/thermalnexus-core $(PREFIX)/bin/
 	sudo cp -r python/ $(PREFIX)/python/
-	sudo cp -r dashboard/dist/ $(PREFIX)/dashboard/
+	sudo cp dashboard/release/*.AppImage $(PREFIX)/bin/ThermalNexus.AppImage
+	sudo chmod +x $(PREFIX)/bin/ThermalNexus.AppImage
 	sudo cp config.toml $(PREFIX)/config/
 	sudo cp bash_scripts/thermalnexus-start.sh $(PREFIX)/bin/
 	sudo chmod +x $(PREFIX)/bin/thermalnexus-start.sh

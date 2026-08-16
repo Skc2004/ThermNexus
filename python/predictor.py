@@ -9,6 +9,7 @@ import atexit
 import json
 import logging
 import config_loader
+import rl_agent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,23 +35,23 @@ except Exception:
 class GhostLinkWriter:
     def __init__(self, filename="/tmp/thermal_ghostlink.shm"):
         self.filename = filename
-        # Expanded to 96 bytes for multi-core and action telemetry
+        # Expanded to 128 bytes for multi-core and circuit-level action telemetry
         # Create or resize the file — do NOT delete it (Rust may already have it mmap'd)
         if not os.path.exists(self.filename):
             with open(self.filename, "wb") as f:
-                f.write(b'\x00' * 96)
+                f.write(b'\x00' * 128)
         else:
             # Ensure correct size without destroying the inode
             with open(self.filename, "r+b") as f:
                 f.seek(0, 2)  # seek to end
                 size = f.tell()
-                if size < 96:
-                    f.write(b'\x00' * (96 - size))
+                if size < 128:
+                    f.write(b'\x00' * (128 - size))
                 
         self.f = open(self.filename, "r+b")
-        self.mm = mmap.mmap(self.f.fileno(), 96, access=mmap.ACCESS_WRITE)
+        self.mm = mmap.mmap(self.f.fileno(), 128, access=mmap.ACCESS_WRITE)
         
-    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None):
+    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0):
         now_ms = int(time.time() * 1000)
         self.mm.seek(0)
         
@@ -65,6 +66,20 @@ class GhostLinkWriter:
         
         self.mm.write(base_data)
         self.mm.write(core_data)
+        
+        # Action space expansion (16 bytes starting at offset 96)
+        self.mm.seek(96)
+        action_data = struct.pack(">i i q", int(target_case), int(target_pump), int(target_pl1_uw))
+        self.mm.write(action_data)
+        
+        # CPU Freq expansion (4 bytes starting at offset 112)
+        self.mm.seek(112)
+        self.mm.write(struct.pack(">i", int(target_cpu_freq_mhz)))
+        
+        # GPU Watts expansion (4 bytes starting at offset 116)
+        self.mm.seek(116)
+        self.mm.write(struct.pack(">i", int(target_gpu_watts)))
+        
         self.mm.flush()  # Force visibility to Rust daemon's mmap
         
     def zero_heartbeat(self):
@@ -202,6 +217,12 @@ def run():
     model = ThermalPredictor()
     
     cfg = config_loader.load_config()
+    try:
+        with open("capabilities.json", "r") as f:
+            caps = json.load(f)
+    except Exception:
+        caps = {"can_control_gpu": False, "gpu_type": None, "can_control_dvfs": False}
+        
     MODEL_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), cfg["paths"]["model_weights"])
     
     if os.path.exists(MODEL_WEIGHTS):
@@ -211,6 +232,9 @@ def run():
         log.warning("[WARN] No trained weights found — running with untrained model!")
         
     model.eval() # inference mode
+    
+    log.info("4. Initializing RL Actor-Critic Agent...")
+    rl = rl_agent.RLThermalAgent(cfg)
     
     log.info("==== Python Brain Online. Pre-empting hardware workloads ====")
     current_pwm_state = 128
@@ -264,30 +288,25 @@ def run():
                 else:
                     predicted_temp = cpu_temp
             
-            # === MODEL PREDICTIVE CONTROL (MPC) HORIZON ===
+            # === CONTINUOUS RL ACTOR-CRITIC INFERENCE ===
+            state_list = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
             try:
-                from scipy.optimize import minimize
+                target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz = rl.select_action(state_list)
+                target_pl1_uw = int(target_pl1_watts * 1_000_000)
                 
-                T_target = cfg["mpc"]["target_temp"]
-                
-                def mpc_cost(pwm_action):
-                    action = pwm_action[0]
-                    delta_pwm = action - current_pwm_state
-                    projected_t = predicted_temp - (action / 10.0)
-                    
-                    acoustic_penalty = cfg["mpc"]["acoustic_penalty"] * (delta_pwm ** 2)
-                    thermal_penalty = cfg["mpc"]["thermal_penalty"] * max(0, projected_t - T_target)**2
-                    return acoustic_penalty + thermal_penalty
+                # Dynamic Hardware Execution (Python Side)
+                if caps.get("can_control_gpu") and caps.get("gpu_type") == "nvidia":
+                    try:
+                        pynvml.nvmlDeviceSetPowerManagementLimit(GPU_HANDLE, int(target_gpu_watts * 1000))
+                    except Exception as gpu_e:
+                        log.debug(f"Failed to set NVML power limit: {gpu_e}")
+                        
+            except Exception as e:
+                log.error(f"RL Agent failed: {e}")
+                target_pwm, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz = 128, 128, 128, 0, 0
 
-                res = minimize(mpc_cost, [current_pwm_state], bounds=[(cfg["mpc"]["pwm_min"], cfg["mpc"]["pwm_max"])])
-                target_pwm = int(res.x[0])
-            except ImportError:
-                target_pwm = 80 # Idle baseline
-                if predicted_temp > 50.0:
-                    target_pwm = int(min(255, (predicted_temp - 50) * 12 + 80))
-            
             current_pwm_state = target_pwm
-            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps)
+            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts)
             
             # Online fine-tuning history stack
             history.append((feature_queue.copy(), cpu_temp))
