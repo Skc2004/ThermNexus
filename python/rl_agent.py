@@ -26,7 +26,7 @@ class ContinuousActor(nn.Module):
 
     def forward(self, state):
         features = self.net(state)
-        # Actions: [CPU_PWM, Case_PWM, Pump_PWM, PL1, GPU_PL, CPU_Freq, Voltage_Offset]
+        # Actions: [CPU_PWM, Case_PWM, Pump_PWM, PL1, GPU_PL, CPU_Freq_Global, Voltage_Offset, Core0_Freq..Core7_Freq]
         mu = self.mu(features)
         std = torch.exp(self.log_std).clamp(min=1e-3)
         return mu, std
@@ -49,7 +49,7 @@ class Critic(nn.Module):
 class RLThermalAgent:
     def __init__(self, config):
         self.cfg = config
-        self.actor = ContinuousActor(state_dim=5, action_dim=7)
+        self.actor = ContinuousActor(state_dim=5, action_dim=15)
         self.critic = Critic(state_dim=5)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)
@@ -121,13 +121,19 @@ class RLThermalAgent:
         cpu_freq_mhz = int(self.cpu_freq_min + actions[5] * (self.cpu_freq_max - self.cpu_freq_min))
         voltage_offset_mv = int(self.voltage_min + actions[6] * (self.voltage_max - self.voltage_min))
         
+        # Per-core frequency targets (actions[7..14])
+        per_core_freqs = []
+        for i in range(8):
+            freq = int(self.cpu_freq_min + actions[7 + i] * (self.cpu_freq_max - self.cpu_freq_min))
+            per_core_freqs.append(freq)
+        
         # Store for training
         self._last_state = state_tensor
         self._last_logprob = action_logprob
         self._last_entropy = entropy
         self.metrics["entropy"] = entropy
         
-        return cpu_pwm, case_pwm, pump_pwm, pl1_watts, gpu_watts, cpu_freq_mhz, voltage_offset_mv
+        return cpu_pwm, case_pwm, pump_pwm, pl1_watts, gpu_watts, cpu_freq_mhz, voltage_offset_mv, per_core_freqs
 
     def compute_reward(self, cpu_temp, gpu_temp, pwm, watts):
         """Reward: keep temps low, fans quiet, power efficient."""
@@ -191,7 +197,7 @@ class RLThermalAgent:
 
     def reset_brain(self):
         """Wipe all learned weights and reinitialize fresh."""
-        self.actor = ContinuousActor(state_dim=5, action_dim=7)
+        self.actor = ContinuousActor(state_dim=5, action_dim=15)
         self.critic = Critic(state_dim=5)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)

@@ -194,10 +194,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     
                     let target_cpu_freq = ghost_link.get_target_cpu_freq_mhz();
                     if target_cpu_freq > 0 && !cpufreq_paths.is_empty() {
-                        // The scaling_max_freq file expects KHz (MHz * 1000)
+                        // Global fallback: The scaling_max_freq file expects KHz (MHz * 1000)
                         let target_khz = (target_cpu_freq as i64) * 1000;
                         for path in &cpufreq_paths {
                             write_i64(path, target_khz);
+                        }
+                    }
+                    
+                    // Per-core frequency intelligence: override global with per-core targets
+                    let per_core_freqs = ghost_link.get_per_core_freqs();
+                    for (i, &freq_mhz) in per_core_freqs.iter().enumerate() {
+                        if freq_mhz > 0 && i < cpufreq_paths.len() {
+                            let target_khz = (freq_mhz as i64) * 1000;
+                            write_i64(&cpufreq_paths[i], target_khz);
                         }
                     }
                     
@@ -215,12 +224,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Broadcast out over Websockets back to React UI
+            let per_core_freqs_json: Vec<i32> = ghost_link.get_per_core_freqs();
             let bcast_payload = serde_json::json!({
                 "pwm": current_applied_pwm,
                 "target_cpu_freq": ghost_link.get_target_cpu_freq_mhz(),
                 "target_gpu_watts": ghost_link.get_target_gpu_watts(),
                 "target_pl1_watts": ghost_link.get_target_pl1_uw() / 1_000_000,
                 "target_voltage_offset_mv": ghost_link.get_target_voltage_offset_mv().clamp(-150, 0),
+                "per_core_freqs": per_core_freqs_json,
                 "heartbeat": last_heartbeat,
                 "failsafe": is_failsafe_triggered,
                 "ui_lock": is_ui_locked,

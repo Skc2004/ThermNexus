@@ -84,7 +84,7 @@ def update_active_profile(profiles):
     except Exception as e:
         log.error(f"Failed to write active profile: {e}")
         
-    return top_cpu
+    return top_cpu, top_proc_name
 
 def record_data():
     log.info(f"Booting SQLite Profiler to {DB_PATH}")
@@ -112,7 +112,7 @@ def record_data():
             fan_rpm = int(target_pwm / 255.0 * 2000.0)
             
             profiles = load_profiles()
-            process_velocity = update_active_profile(profiles)
+            process_velocity, top_proc_name = update_active_profile(profiles)
             
             gpu_temp = 40.0
             power_watts = get_power_consumption()
@@ -129,7 +129,7 @@ def record_data():
                 "pwm": target_pwm,
                 "watts": round(power_watts, 1),
                 "rpm": fan_rpm,
-                "app": top_proc_name if 'top_proc_name' in dir() else "idle"
+                "app": top_proc_name
             }
             session_buffer.append(session_frame)
             

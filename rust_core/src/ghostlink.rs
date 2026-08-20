@@ -10,10 +10,10 @@ impl GhostLink {
     pub fn new(path: &str) -> std::io::Result<Self> {
         let file_path = Path::new(path);
         
-        // Expand to 128 bytes for multi-core thermal mapping and circuit-level control
+        // Expand to 256 bytes for per-core frequency intelligence
         if !file_path.exists() {
             let file = std::fs::File::create(file_path)?;
-            file.set_len(128)?;
+            file.set_len(256)?;
         }
         
         let file = OpenOptions::new()
@@ -21,7 +21,7 @@ impl GhostLink {
             .write(true)
             .open(file_path)?;
 
-        let mmap = unsafe { MmapOptions::new().len(128).map_mut(&file)? };
+        let mmap = unsafe { MmapOptions::new().len(256).map_mut(&file)? };
 
         Ok(GhostLink { mmap })
     }
@@ -104,6 +104,16 @@ impl GhostLink {
         }
         cores
     }
+
+    /// Read 8 per-core frequency targets starting at offset 128 (in MHz)
+    pub fn get_per_core_freqs(&self) -> Vec<i32> {
+        let mut freqs = Vec::with_capacity(8);
+        for i in 0..8 {
+            let start = 128 + (i * 4);
+            freqs.push(self.volatile_read_i32(start));
+        }
+        freqs
+    }
 }
 
 #[cfg(test)]
@@ -127,7 +137,7 @@ mod tests {
         let _gl = GhostLink::new(path).unwrap();
         assert!(Path::new(path).exists());
         let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 128);
+        assert_eq!(meta.len(), 256);
     }
 
     #[test]

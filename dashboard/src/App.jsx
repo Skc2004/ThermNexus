@@ -60,18 +60,34 @@ export default function App() {
   const [targetPl1, setTargetPl1] = useState(0);
   const [targetGpuWatts, setTargetGpuWatts] = useState(0);
   const [targetVoltageOffset, setTargetVoltageOffset] = useState(0);
+  const [perCoreFreqs, setPerCoreFreqs] = useState([0,0,0,0,0,0,0,0]);
 
   const [onBattery, setOnBattery] = useState(false);
   const [acousticMode, setAcousticMode] = useState(false);
   const [cryoBoost, setCryoBoost] = useState(false);
+  const [fanCurve, setFanCurve] = useState({ enabled: false, curve: [] });
 
   // ── Active Profile ──
   const [activeProfile, setActiveProfile] = useState({ app: 'idle', mode: 'default', cpu_usage: 0 });
 
-  // ── Initialization ──
   useEffect(() => {
     fetchCapabilities().then(setCapabilities);
+    fetch('http://localhost:8889/config/fancurve')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok') setFanCurve(data.data);
+      })
+      .catch(() => {});
   }, []);
+
+  const saveFanCurve = (newCurveConfig) => {
+    setFanCurve(newCurveConfig);
+    fetch('http://localhost:8889/config/fancurve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newCurveConfig)
+    }).catch(console.error);
+  };
 
   // ── Telemetry ──
   const [cpuTemp, setCpuTemp] = useState(0);
@@ -108,19 +124,43 @@ export default function App() {
   }, [viewMode]);
 
   // ── Profile Polling ──
+  const [profiles, setProfiles] = useState({});
+  const [systemProcesses, setSystemProcesses] = useState([]);
+
   useEffect(() => {
     const fetchProfile = () => {
       fetch('http://localhost:8889/profile/active')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') setActiveProfile(data.data);
-        })
-        .catch(() => {});
+        }).catch(() => {});
+      
+      fetch('http://localhost:8889/system/processes')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') setSystemProcesses(data.data);
+        }).catch(() => {});
     };
+    
+    fetch('http://localhost:8889/config/profiles')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok') setProfiles(data.data);
+      }).catch(() => {});
+
     const interval = setInterval(fetchProfile, 2000);
     fetchProfile();
     return () => clearInterval(interval);
   }, []);
+
+  const saveProfiles = (newProfiles) => {
+    setProfiles(newProfiles);
+    fetch('http://localhost:8889/config/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newProfiles)
+    }).catch(console.error);
+  };
 
   useEffect(() => {
     const fetchContext = () => {
@@ -177,6 +217,7 @@ export default function App() {
           if (p.target_pl1_watts !== undefined) setTargetPl1(p.target_pl1_watts);
           if (p.target_gpu_watts !== undefined) setTargetGpuWatts(p.target_gpu_watts);
           if (p.target_voltage_offset_mv !== undefined) setTargetVoltageOffset(p.target_voltage_offset_mv);
+          if (p.per_core_freqs) setPerCoreFreqs(p.per_core_freqs);
 
           // Heartbeat age tracking
           if (p.heartbeat) {
@@ -316,6 +357,7 @@ export default function App() {
             <SidebarBtn icon={Stethoscope} active={page === 'diagnostics'} color="orange" onClick={() => setPage('diagnostics')} title="Health Diagnostics" />
             <SidebarBtn icon={FlaskConical} active={page === 'ailab'} color="purple" onClick={() => setPage('ailab')} title="AI Lab" />
             <SidebarBtn icon={Bell} active={page === 'alerts'} color="teal" onClick={() => setPage('alerts')} title="Alert Center" />
+            <SidebarBtn icon={Layers} active={page === 'profiles'} color="blue" onClick={() => setPage('profiles')} title="App Profiles" />
           </div>
           <SidebarBtn icon={Power} className="hover:!text-red-400" title="Shutdown" />
         </aside>
@@ -335,9 +377,10 @@ export default function App() {
             targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset}
             acousticMode={acousticMode} setAcousticMode={setAcousticMode}
             cryoBoost={cryoBoost} setCryoBoost={setCryoBoost} onBattery={onBattery}
+            perCoreFreqs={perCoreFreqs}
           />}
 
-          {page === 'cpu' && <CpuPage coreTemps={coreTemps} cpuTemp={cpuTemp} gpuTemp={gpuTemp} watts={watts} data={data} isOnline={isOnline} status={status} />}
+          {page === 'cpu' && <CpuPage coreTemps={coreTemps} cpuTemp={cpuTemp} gpuTemp={gpuTemp} watts={watts} data={data} isOnline={isOnline} status={status} perCoreFreqs={perCoreFreqs} />}
 
           {page === 'cooling' && <CoolingPage
             currentPwm={currentPwm} uiLock={uiLock} failsafe={failsafe}
@@ -345,6 +388,7 @@ export default function App() {
             releaseOverride={releaseOverride} engageManual={engageManual}
             efficacy={efficacy} cpuTemp={cpuTemp} data={data}
             isOnline={isOnline} status={status}
+            fanCurve={fanCurve} saveFanCurve={saveFanCurve}
           />}
 
           {page === 'algo' && <AlgoPage
@@ -360,6 +404,7 @@ export default function App() {
           {page === 'ailab' && <AILabPage isOnline={isOnline} status={status} />}
 
           {page === 'alerts' && <AlertsPage isOnline={isOnline} status={status} />}
+          {page === 'profiles' && <ProfilePage isOnline={isOnline} status={status} profiles={profiles} saveProfiles={saveProfiles} systemProcesses={systemProcesses} activeProfile={activeProfile} />}
 
         </main>
       </div>
@@ -370,7 +415,7 @@ export default function App() {
 // ══════════════════════════════════════════════
 // ██  PAGE: DASHBOARD (main overview)
 // ══════════════════════════════════════════════
-function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset, acousticMode, setAcousticMode, cryoBoost, setCryoBoost, onBattery }) {
+function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset, acousticMode, setAcousticMode, cryoBoost, setCryoBoost, onBattery, perCoreFreqs }) {
   return (
     <>
       {/* Header */}
@@ -420,13 +465,20 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
       {/* Main Grid */}
       <div className="grid grid-cols-12 gap-4 flex-1 min-h-0 animate-slide-in" style={{ animationDelay: '100ms' }}>
 
-        {/* 3D Isometric Thermal Map */}
+        {/* 3D Isometric Thermal + Frequency Map */}
         <div className="col-span-4 glass-panel p-5 flex flex-col overflow-hidden relative">
-          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-8 flex items-center gap-2">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
             <Thermometer size={11} className="text-blue-400/60" /> 3D Core Topology
+            <span className="text-[7px] text-purple-400/50 ml-auto">TEMP + FREQ</span>
           </h3>
           
-          <div className="flex-1 flex items-center justify-center pt-8">
+          {/* Legend */}
+          <div className="flex items-center gap-4 mb-4 text-[7px] text-white/25">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-gradient-to-r from-blue-500 to-red-500" /> Height = Temp</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-purple-500/50" /> Label = AI Freq Cap</span>
+          </div>
+          
+          <div className="flex-1 flex items-center justify-center">
             <div 
               className="grid grid-cols-4 gap-3 transition-all duration-[2000ms] ease-out"
               style={{
@@ -436,32 +488,40 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
             >
               {coreTemps.map((temp, i) => {
                 const hc = getHeatColor(temp);
-                // Calculate dynamic height based on temp (e.g. 30C -> 10px, 90C -> 60px)
                 const zHeight = Math.max(10, (temp - 30) * 1.2);
+                const coreFreq = (perCoreFreqs && perCoreFreqs[i]) || 0;
+                // Frequency color: green=full turbo, amber=throttled, red=heavily throttled
+                const freqPct = coreFreq > 0 ? Math.min(1, (coreFreq - 800) / (5500 - 800)) : 0;
+                const freqColor = freqPct > 0.7 ? 'text-emerald-400' : freqPct > 0.4 ? 'text-amber-400' : 'text-red-400';
                 
                 return (
                   <div 
                     key={i} 
-                    className={`w-12 h-12 rounded-lg bg-gradient-to-br ${hc.bg} border border-white/[0.15] flex flex-col items-center justify-center transition-all duration-700 shadow-xl relative`}
+                    className={`w-14 h-14 rounded-lg bg-gradient-to-br ${hc.bg} border border-white/[0.15] flex flex-col items-center justify-center transition-all duration-700 shadow-xl relative`}
                     style={{
                       transform: `translateZ(${zHeight}px)`,
                       transformStyle: 'preserve-3d',
                       boxShadow: `inset 0 0 10px rgba(255,255,255,0.1), -10px 10px 20px rgba(0,0,0,0.5)`
                     }}
                   >
-                    {/* 3D "Walls" for depth illusion */}
-                    <div className={`absolute top-full left-0 w-full origin-top transform rotate-x-[-90deg] bg-black/40 border border-white/5 rounded-b-lg transition-all duration-700`} style={{ height: `${zHeight}px` }} />
-                    <div className={`absolute top-0 left-full h-full origin-left transform rotate-y-[90deg] bg-black/60 border border-white/5 rounded-r-lg transition-all duration-700`} style={{ width: `${zHeight}px` }} />
+                    {/* 3D Walls */}
+                    <div className="absolute top-full left-0 w-full origin-top transform rotate-x-[-90deg] bg-black/40 border border-white/5 rounded-b-lg transition-all duration-700" style={{ height: `${zHeight}px` }} />
+                    <div className="absolute top-0 left-full h-full origin-left transform rotate-y-[90deg] bg-black/60 border border-white/5 rounded-r-lg transition-all duration-700" style={{ width: `${zHeight}px` }} />
                     
-                    <span className={`text-[10px] font-black mono ${hc.text} relative z-10`}>{temp.toFixed(0)}°</span>
-                    <span className="text-[6px] font-bold text-white/40 uppercase tracking-widest relative z-10">C{i}</span>
+                    <span className={`text-[10px] font-black mono ${hc.text} relative z-10 leading-none`}>{temp.toFixed(0)}°</span>
+                    <span className="text-[5px] font-bold text-white/40 uppercase tracking-widest relative z-10">C{i}</span>
+                    {coreFreq > 0 && (
+                      <span className={`text-[6px] font-black mono ${freqColor} relative z-10 leading-none mt-0.5`}>
+                        {coreFreq > 1000 ? `${(coreFreq/1000).toFixed(1)}G` : `${coreFreq}M`}
+                      </span>
+                    )}
                   </div>
                 );
               })}
             </div>
           </div>
           
-          <div className="mt-8 flex items-center justify-between text-[9px] text-white/20 relative z-20">
+          <div className="mt-4 flex items-center justify-between text-[9px] text-white/20 relative z-20">
             <span>Avg: <span className="mono text-white/40">{avgTemp.toFixed(1)}°C</span></span>
             <span>Max: <span className="mono text-white/40">{Math.max(...coreTemps).toFixed(1)}°C</span></span>
           </div>
@@ -515,7 +575,7 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
 // ══════════════════════════════════════════════
 // ██  PAGE: CPU DETAIL
 // ══════════════════════════════════════════════
-function CpuPage({ coreTemps, cpuTemp, gpuTemp, watts, data, isOnline, status }) {
+function CpuPage({ coreTemps, cpuTemp, gpuTemp, watts, data, isOnline, status, perCoreFreqs }) {
   const coreBarData = coreTemps.map((t, i) => ({ name: `C${i}`, temp: parseFloat(t.toFixed(1)) }));
   const maxTemp = Math.max(...coreTemps);
   const minTemp = Math.min(...coreTemps);
@@ -571,11 +631,22 @@ function CpuPage({ coreTemps, cpuTemp, gpuTemp, watts, data, isOnline, status })
         <div className="grid grid-cols-8 gap-3">
           {coreTemps.map((temp, i) => {
             const hc = getHeatColor(temp);
+            const coreFreq = (perCoreFreqs && perCoreFreqs[i]) || 0;
+            const freqPct = coreFreq > 0 ? Math.min(1, (coreFreq - 800) / (5500 - 800)) : 0;
+            const freqColor = freqPct > 0.7 ? 'text-emerald-400' : freqPct > 0.4 ? 'text-amber-400' : 'text-red-400';
+            
             return (
               <div key={i} className={`rounded-2xl bg-gradient-to-br ${hc.bg} border border-white/[0.07] p-4 flex flex-col items-center justify-center transition-all duration-700 shadow-lg ${hc.glow} hover:border-white/15 relative overflow-hidden aspect-square`}>
                 <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-black/30 to-transparent pointer-events-none" />
                 <span className={`text-xl font-black mono ${hc.text} relative z-10`}>{temp.toFixed(1)}°</span>
                 <span className="text-[8px] font-bold text-white/30 uppercase tracking-widest relative z-10 mt-1">Core {i}</span>
+                
+                {coreFreq > 0 && (
+                  <span className={`text-[9px] font-black mono ${freqColor} relative z-10 mt-2 bg-black/40 px-2 py-0.5 rounded border border-white/5`}>
+                    {coreFreq > 1000 ? `${(coreFreq/1000).toFixed(1)}G` : `${coreFreq}M`}
+                  </span>
+                )}
+                
                 <div className="w-full h-1 bg-white/5 rounded-full mt-2 relative z-10 overflow-hidden">
                   <div className={`h-full rounded-full transition-all duration-500 ${temp > 75 ? 'bg-red-400' : temp > 55 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: `${clamp(temp, 0, 100)}%` }} />
                 </div>
@@ -594,7 +665,7 @@ function CpuPage({ coreTemps, cpuTemp, gpuTemp, watts, data, isOnline, status })
 // ══════════════════════════════════════════════
 // ██  PAGE: COOLING & FAN
 // ══════════════════════════════════════════════
-function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, releaseOverride, engageManual, efficacy, cpuTemp, data, isOnline, status }) {
+function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, releaseOverride, engageManual, efficacy, cpuTemp, data, isOnline, status, fanCurve, saveFanCurve }) {
   const fanRpm = Math.round((currentPwm / 255) * 2000);
   return (
     <>
@@ -647,6 +718,46 @@ function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, re
             </span>
           </div>
         </div>
+      </div>
+
+      <div className="glass-panel p-5 mt-4 animate-slide-in" style={{ animationDelay: '100ms' }}>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase flex items-center gap-2">
+            <Activity size={11} className="text-purple-400/60" /> Custom Fan Curve Override
+          </h3>
+          <button 
+            onClick={() => saveFanCurve({ ...fanCurve, enabled: !fanCurve.enabled })}
+            className={`px-3 py-1 rounded-full text-[9px] font-black tracking-widest transition-all uppercase border ${fanCurve.enabled ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'bg-white/5 text-white/30 border-white/10 hover:bg-white/10'}`}
+          >
+            {fanCurve.enabled ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
+        
+        <div className={`grid grid-cols-4 gap-4 transition-all duration-500 ${fanCurve.enabled ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+          {fanCurve.curve && fanCurve.curve.map((pt, idx) => (
+            <div key={idx} className="bg-black/20 p-4 rounded-xl border border-white/5">
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{pt.temp}°C Node</span>
+                <span className="mono text-xs font-black text-purple-300">{pwmToPercent(pt.pwm)}%</span>
+              </div>
+              <input 
+                type="range" min="0" max="255" value={pt.pwm} 
+                onChange={(e) => {
+                  const newCurve = [...fanCurve.curve];
+                  newCurve[idx].pwm = parseInt(e.target.value);
+                  saveFanCurve({ ...fanCurve, curve: newCurve });
+                }}
+                className="w-full accent-purple-500" 
+              />
+              <div className="flex justify-between text-[8px] text-white/20 font-bold mono mt-2">
+                <span>0%</span><span>100%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[9px] text-white/20 mt-4 max-w-2xl leading-relaxed">
+          When enabled, the Custom Fan Curve acts as an absolute override bounding the AI's cooling decisions. The AI will interpolate between the nodes you set above.
+        </p>
       </div>
 
       <ChartPanel viewMode="live" chartData={data} />
@@ -1162,7 +1273,6 @@ function DiagnosticsPage({ isOnline, status }) {
               <div className="h-full flex items-center justify-center text-white/10 font-black tracking-widest text-xs uppercase">No Medical History Found</div>
             )}
           </div>
-          </div>
         </div>
       </div>
     </>
@@ -1450,3 +1560,132 @@ function AlertsPage({ isOnline, status }) {
     </>
   );
 }
+
+// ══════════════════════════════════════════════
+// ██  PAGE: APP PROFILES
+// ══════════════════════════════════════════════
+function ProfilePage({ isOnline, status, profiles, saveProfiles, systemProcesses, activeProfile }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  const modes = [
+    { id: 'default', name: 'Default', color: 'blue' },
+    { id: 'silent', name: 'Acoustic / Silent', color: 'teal' },
+    { id: 'performance', name: 'Cryo-Boost', color: 'red' },
+    { id: 'battery', name: 'Battery Saver', color: 'green' }
+  ];
+
+  const handleBind = (appName, mode) => {
+    const newProfiles = { ...profiles };
+    if (mode === 'default') {
+      delete newProfiles[appName];
+    } else {
+      newProfiles[appName] = mode;
+    }
+    saveProfiles(newProfiles);
+  };
+
+  const filteredProcs = systemProcesses.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  return (
+    <>
+      <header className="animate-slide-in">
+        <h1 className="text-2xl font-black text-white tracking-tight leading-none">Application Profiles</h1>
+        <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase mt-1.5 flex items-center gap-2">
+          <StatusDot online={isOnline} /> {status} — Workload-aware thermal bindings
+        </p>
+      </header>
+
+      <div className="grid grid-cols-12 gap-5 flex-1 min-h-0 animate-slide-in" style={{animationDelay: '50ms'}}>
+        
+        {/* Bound Apps List */}
+        <div className="col-span-4 glass-panel p-6 flex flex-col min-h-0">
+          <h2 className="text-[11px] font-black tracking-[0.25em] text-white/40 uppercase mb-4 flex items-center gap-2">
+            <Shield size={14} /> Bound Processes
+          </h2>
+          <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+            {Object.keys(profiles).length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/10 font-black tracking-widest text-xs uppercase text-center p-4">
+                No apps bound. AI will use generic mode.
+              </div>
+            ) : (
+              Object.entries(profiles).map(([appName, modeId]) => {
+                const modeInfo = modes.find(m => m.id === modeId) || modes[0];
+                const isActive = activeProfile && activeProfile.app === appName;
+                return (
+                  <div key={appName} className={`p-4 border rounded-xl flex items-center justify-between ${isActive ? 'bg-blue-500/10 border-blue-500/30' : 'bg-black/20 border-white/5'}`}>
+                    <div>
+                      <span className={`text-xs font-black block ${isActive ? 'text-blue-300' : 'text-white/80'}`}>{appName}</span>
+                      <span className={`text-[9px] uppercase tracking-widest font-bold mt-1 block text-${modeInfo.color}-400`}>{modeInfo.name}</span>
+                    </div>
+                    <button 
+                      onClick={() => handleBind(appName, 'default')}
+                      className="w-6 h-6 rounded bg-red-500/10 hover:bg-red-500/30 flex items-center justify-center text-red-400 font-bold transition-all"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Active System Process Browser */}
+        <div className="col-span-8 glass-panel p-6 flex flex-col min-h-0">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[11px] font-black tracking-[0.25em] text-white/40 uppercase flex items-center gap-2">
+              <Activity size={14} /> Process Browser
+            </h2>
+            <input 
+              type="text" 
+              placeholder="Search processes..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-xs text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50"
+            />
+          </div>
+          
+          <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+            {filteredProcs.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/10 font-black tracking-widest text-xs uppercase">
+                No active processes found
+              </div>
+            ) : (
+              filteredProcs.map((proc, i) => {
+                const currentMode = profiles[proc.name] || 'default';
+                return (
+                  <div key={i} className="p-3 bg-black/20 hover:bg-white/[0.02] border border-white/5 rounded-xl flex items-center justify-between transition-colors">
+                    <div className="flex items-center gap-4 w-1/2">
+                      <span className="text-xs font-bold text-white w-1/2 truncate" title={proc.name}>{proc.name}</span>
+                      <div className="flex gap-3 text-[10px] mono text-white/40">
+                        <span>CPU: {proc.cpu}%</span>
+                        <span>MEM: {proc.mem}%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {modes.map(mode => (
+                        <button
+                          key={mode.id}
+                          onClick={() => handleBind(proc.name, mode.id)}
+                          className={`px-2 py-1 rounded text-[9px] font-black tracking-widest uppercase border transition-all ${
+                            currentMode === mode.id 
+                              ? `bg-${mode.color}-500/20 text-${mode.color}-300 border-${mode.color}-500/30` 
+                              : 'bg-transparent text-white/20 border-transparent hover:bg-white/5'
+                          }`}
+                        >
+                          {mode.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+export default App;

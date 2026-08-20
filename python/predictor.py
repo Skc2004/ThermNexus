@@ -35,23 +35,23 @@ except Exception:
 class GhostLinkWriter:
     def __init__(self, filename="/tmp/thermal_ghostlink.shm"):
         self.filename = filename
-        # Expanded to 128 bytes for multi-core and circuit-level action telemetry
+        # Expanded to 256 bytes for per-core frequency intelligence
         # Create or resize the file — do NOT delete it (Rust may already have it mmap'd)
         if not os.path.exists(self.filename):
             with open(self.filename, "wb") as f:
-                f.write(b'\x00' * 128)
+                f.write(b'\x00' * 256)
         else:
             # Ensure correct size without destroying the inode
             with open(self.filename, "r+b") as f:
                 f.seek(0, 2)  # seek to end
                 size = f.tell()
-                if size < 128:
-                    f.write(b'\x00' * (128 - size))
+                if size < 256:
+                    f.write(b'\x00' * (256 - size))
                 
         self.f = open(self.filename, "r+b")
-        self.mm = mmap.mmap(self.f.fileno(), 128, access=mmap.ACCESS_WRITE)
+        self.mm = mmap.mmap(self.f.fileno(), 256, access=mmap.ACCESS_WRITE)
         
-    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0, target_voltage_offset_mv=0):
+    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0, target_voltage_offset_mv=0, per_core_freqs=None):
         now_ms = int(time.time() * 1000)
         self.mm.seek(0)
         
@@ -82,7 +82,13 @@ class GhostLinkWriter:
         
         # Voltage Offset expansion (4 bytes starting at offset 120)
         self.mm.seek(120)
-        self.mm.write(struct.pack(">i", int(target_voltage_offset_mv)))
+        self.mm.write(struct.pack('>i', int(target_voltage_offset_mv)))
+        
+        # Per-core frequency targets (32 bytes starting at offset 128: 8 × i32)
+        if per_core_freqs and len(per_core_freqs) == 8:
+            self.mm.seek(128)
+            for freq in per_core_freqs:
+                self.mm.write(struct.pack('>i', int(freq)))
         
         self.mm.flush()  # Force visibility to Rust daemon's mmap
         
@@ -300,7 +306,7 @@ def run():
             # === CONTINUOUS RL ACTOR-CRITIC INFERENCE ===
             state_list = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
             try:
-                target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz, target_voltage_offset_mv = rl.select_action(state_list)
+                target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz, target_voltage_offset_mv, per_core_freqs = rl.select_action(state_list)
                 
                 # Check Environment Context
                 try:
@@ -314,6 +320,34 @@ def run():
                             target_cpu_freq_mhz = min(target_cpu_freq_mhz, 2500)
                 except: pass
                 
+                # Feature E: Custom Fan Curve Override
+                try:
+                    import json
+                    curve_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fancurve.json")
+                    if os.path.exists(curve_path):
+                        with open(curve_path, "r") as f:
+                            curve_config = json.load(f)
+                            if curve_config.get("enabled", False):
+                                curve = curve_config.get("curve", [])
+                                if curve:
+                                    curve = sorted(curve, key=lambda x: x["temp"])
+                                    override_pwm = curve[-1]["pwm"]
+                                    if cpu_temp <= curve[0]["temp"]:
+                                        override_pwm = curve[0]["pwm"]
+                                    else:
+                                        for i in range(len(curve) - 1):
+                                            if curve[i]["temp"] <= cpu_temp <= curve[i+1]["temp"]:
+                                                temp_range = curve[i+1]["temp"] - curve[i]["temp"]
+                                                pwm_range = curve[i+1]["pwm"] - curve[i]["pwm"]
+                                                pct = (cpu_temp - curve[i]["temp"]) / temp_range if temp_range > 0 else 0
+                                                override_pwm = curve[i]["pwm"] + (pwm_range * pct)
+                                                break
+                                    target_pwm = int(override_pwm)
+                                    target_case = int(override_pwm)
+                                    target_pump = int(override_pwm)
+                except Exception as e: log.debug(f"Fan curve error: {e}")
+                
+
                 # Feature A: Acoustic Smoothing
                 try:
                     import json
@@ -354,9 +388,10 @@ def run():
             except Exception as e:
                 log.error(f"RL Agent failed: {e}")
                 target_pwm, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_voltage_offset_mv = 128, 128, 128, 0, 0, 0
+                per_core_freqs = [0] * 8
 
             current_pwm_state = target_pwm
-            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts, target_voltage_offset_mv)
+            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts, target_voltage_offset_mv, per_core_freqs)
             
             # === RL ONLINE TRAINING (Actor-Critic) ===
             try:

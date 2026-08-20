@@ -132,6 +132,83 @@ def set_acoustic_mode():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/config/fancurve", methods=["GET", "POST"])
+def manage_fancurve():
+    # Curve format: [{"temp": 30, "pwm": 40}, {"temp": 50, "pwm": 128}, {"temp": 80, "pwm": 255}]
+    curve_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fancurve.json")
+    try:
+        if request.method == "POST":
+            import json
+            curve_data = request.json.get("curve", []) if request.json else []
+            enabled = request.json.get("enabled", False) if request.json else False
+            with open(curve_path, "w") as f:
+                json.dump({"enabled": enabled, "curve": curve_data}, f)
+            return jsonify({"status": "ok", "message": "Fan curve updated."})
+        else:
+            if os.path.exists(curve_path):
+                import json
+                with open(curve_path, "r") as f:
+                    data = json.load(f)
+                return jsonify({"status": "ok", "data": data})
+            else:
+                default_curve = [
+                    {"temp": 30, "pwm": 40},
+                    {"temp": 50, "pwm": 120},
+                    {"temp": 70, "pwm": 180},
+                    {"temp": 85, "pwm": 255}
+                ]
+                return jsonify({"status": "ok", "data": {"enabled": False, "curve": default_curve}})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/config/profiles", methods=["GET", "POST"])
+def manage_profiles():
+    profile_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "python", "profiles.json")
+    try:
+        import json
+        if request.method == "POST":
+            profiles = request.json if request.json else {}
+            with open(profile_path, "w") as f:
+                json.dump(profiles, f, indent=2)
+            return jsonify({"status": "ok", "message": "Profiles updated."})
+        else:
+            if os.path.exists(profile_path):
+                with open(profile_path, "r") as f:
+                    data = json.load(f)
+                return jsonify({"status": "ok", "data": data})
+            return jsonify({"status": "ok", "data": {}})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/system/processes", methods=["GET"])
+def get_processes():
+    try:
+        import psutil
+        procs = []
+        for proc in psutil.process_iter(['name', 'cpu_percent', 'memory_percent']):
+            try:
+                if proc.info['cpu_percent'] > 0.1 or proc.info['memory_percent'] > 0.5:
+                    procs.append({
+                        "name": proc.info['name'],
+                        "cpu": round(proc.info['cpu_percent'], 1),
+                        "mem": round(proc.info['memory_percent'], 1)
+                    })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        
+        # Sort by CPU usage and deduplicate by name
+        procs = sorted(procs, key=lambda x: x['cpu'], reverse=True)
+        unique_procs = []
+        seen = set()
+        for p in procs:
+            if p["name"] not in seen:
+                seen.add(p["name"])
+                unique_procs.append(p)
+                
+        return jsonify({"status": "ok", "data": unique_procs[:20]})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/doctor/prescription", methods=["GET"])
 def get_prescription():
     try:
@@ -250,8 +327,8 @@ def check_and_fire_alerts():
         try:
             import mmap, struct
             with open("/tmp/thermal_ghostlink.shm", "r+b") as f:
-                mm = mmap.mmap(f.fileno(), 128)
-                cpu_temp = struct.unpack_from('f', mm, 4)[0]
+                mm = mmap.mmap(f.fileno(), 256)
+                cpu_temp = struct.unpack_from('>f', mm, 16)[0]
                 mm.close()
         except:
             return
