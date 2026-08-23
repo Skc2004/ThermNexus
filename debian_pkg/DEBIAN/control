@@ -1,0 +1,9 @@
+Package: thermnexus
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Skc <skc@example.com>
+Depends: bash, python3, libc6 (>= 2.31), curl, dmidecode, lm-sensors, msr-tools, nodejs, npm
+Description: ThermNexus - Adaptive Thermal Node
+ AI-driven advanced cooling controller for Linux. Features RL-based Fan curve optimization, hardware telemetry, App profiling, and Swarm clustering.

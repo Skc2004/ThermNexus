@@ -102,7 +102,20 @@ function updateTrayMenu() {
       }
     },
     { type: 'separator' },
-    { label: '🔴 Quit ThermNexus', click: () => { tray = null; app.quit(); } }
+    {
+      label: app.getLoginItemSettings().openAtLogin ? '✓ Launch on Startup' : 'Launch on Startup',
+      click: () => {
+        const settings = app.getLoginItemSettings();
+        app.setLoginItemSettings({
+          openAtLogin: !settings.openAtLogin,
+          path: app.getPath('exe')
+        });
+        updateTrayMenu();
+        showNotification('Startup Settings', `ThermNexus will ${!settings.openAtLogin ? 'now' : 'no longer'} start on boot.`);
+      }
+    },
+    { type: 'separator' },
+    { label: '🔴 Quit ThermNexus', click: () => { tray.destroy(); app.exit(); } }
   ]);
 
   tray.setContextMenu(contextMenu);

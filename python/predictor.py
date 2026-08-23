@@ -39,19 +39,19 @@ class GhostLinkWriter:
         # Create or resize the file — do NOT delete it (Rust may already have it mmap'd)
         if not os.path.exists(self.filename):
             with open(self.filename, "wb") as f:
-                f.write(b'\x00' * 256)
+                f.write(b'\x00' * 320)
         else:
             # Ensure correct size without destroying the inode
             with open(self.filename, "r+b") as f:
                 f.seek(0, 2)  # seek to end
                 size = f.tell()
-                if size < 256:
-                    f.write(b'\x00' * (256 - size))
+                if size < 320:
+                    f.write(b'\x00' * (320 - size))
                 
         self.f = open(self.filename, "r+b")
-        self.mm = mmap.mmap(self.f.fileno(), 256, access=mmap.ACCESS_WRITE)
+        self.mm = mmap.mmap(self.f.fileno(), 320, access=mmap.ACCESS_WRITE)
         
-    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0, target_voltage_offset_mv=0, per_core_freqs=None):
+    def write_target(self, target_pwm, cpu_t, gpu_t, watts, pred_t, core_temps=None, target_case=128, target_pump=200, target_pl1_uw=0, target_cpu_freq_mhz=0, target_gpu_watts=0, target_voltage_offset_mv=0, per_core_freqs=None, ssd_t=35.0, ram_t=40.0):
         now_ms = int(time.time() * 1000)
         self.mm.seek(0)
         
@@ -89,6 +89,10 @@ class GhostLinkWriter:
             self.mm.seek(128)
             for freq in per_core_freqs:
                 self.mm.write(struct.pack('>i', int(freq)))
+                
+        # Expanded hardware telemetry (8 bytes starting at offset 160: 2 × float)
+        self.mm.seek(160)
+        self.mm.write(struct.pack('>f f', float(ssd_t), float(ram_t)))
         
         self.mm.flush()  # Force visibility to Rust daemon's mmap
         
@@ -161,6 +165,32 @@ def get_real_core_temps(config_path=None):
     except Exception:
         pass
     return None
+
+def get_ssd_temp():
+    """Attempt to read NVMe SSD temperature."""
+    try:
+        import psutil
+        temps = psutil.sensors_temperatures()
+        for name, entries in temps.items():
+            if 'nvme' in name.lower() or 'ssd' in name.lower():
+                for entry in entries:
+                    if entry.current > 0:
+                        return float(entry.current)
+    except: pass
+    return 35.0
+
+def get_ram_temp():
+    """Attempt to read RAM/DIMM temperature."""
+    try:
+        import psutil
+        temps = psutil.sensors_temperatures()
+        for name, entries in temps.items():
+            if 'dimm' in name.lower() or 'ram' in name.lower() or 'ddr' in name.lower() or 'soc' in name.lower():
+                for entry in entries:
+                    if entry.current > 0:
+                        return float(entry.current)
+    except: pass
+    return 40.0
 
 def get_current_mock_temp():
     try:
@@ -289,6 +319,9 @@ def run():
                 except Exception:
                     pass
                     
+            ssd_temp = get_ssd_temp()
+            ram_temp = get_ram_temp()
+            
             # Sliding Window Queue Management
             current_feature = [mem_velocity, cpu_temp, gpu_temp, current_watts]
             feature_queue.append(current_feature)
@@ -304,7 +337,8 @@ def run():
                     predicted_temp = cpu_temp
             
             # === CONTINUOUS RL ACTOR-CRITIC INFERENCE ===
-            state_list = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
+            # Expanded State: [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp, ssd_temp, ram_temp]
+            state_list = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp, ssd_temp, ram_temp]
             try:
                 target_pwm, target_case, target_pump, target_pl1_watts, target_gpu_watts, target_cpu_freq_mhz, target_voltage_offset_mv, per_core_freqs = rl.select_action(state_list)
                 
@@ -391,12 +425,12 @@ def run():
                 per_core_freqs = [0] * 8
 
             current_pwm_state = target_pwm
-            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts, target_voltage_offset_mv, per_core_freqs)
+            ghost_link.write_target(target_pwm, cpu_temp, gpu_temp, current_watts, predicted_temp, core_temps, target_case, target_pump, target_pl1_uw, target_cpu_freq_mhz, target_gpu_watts, target_voltage_offset_mv, per_core_freqs, ssd_temp, ram_temp)
             
             # === RL ONLINE TRAINING (Actor-Critic) ===
             try:
-                reward = rl.compute_reward(cpu_temp, gpu_temp, target_pwm, current_watts)
-                next_state = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp]
+                reward = rl.compute_reward(cpu_temp, gpu_temp, target_pwm, current_watts, ssd_temp, ram_temp)
+                next_state = [mem_velocity, cpu_temp, gpu_temp, current_watts, predicted_temp, ssd_temp, ram_temp]
                 rl.train_step(next_state, reward)
                 
                 # Check for brain reset request

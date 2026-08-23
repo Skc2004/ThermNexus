@@ -1,0 +1,18 @@
+[Unit]
+Description=ThermalNexus Python ML Brain Orchestrator
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=INSTALL_DIR
+# Booting the four python background components
+ExecStart=/bin/bash -c 'PYTHON_BIN=/home/skc/anaconda3/envs/thermalnexus/bin/python; $PYTHON_BIN python/api_server.py & $PYTHON_BIN python/profiler.py & $PYTHON_BIN python/rgb_sync.py & exec $PYTHON_BIN python/predictor.py'
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=thermalnexus-brain
+
+[Install]
+WantedBy=multi-user.target

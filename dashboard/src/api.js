@@ -1,6 +1,6 @@
 export const fetchHistoricData = async (hours = 24, limit = 1000) => {
     try {
-        const response = await fetch(`http://localhost:8889/history?hours=${hours}&limit=${limit}`);
+        const response = await fetch(`http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/history?hours=${hours}&limit=${limit}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -18,7 +18,7 @@ export const fetchHistoricData = async (hours = 24, limit = 1000) => {
 
 export const fetchCapabilities = async () => {
     try {
-        const response = await fetch(`http://localhost:8889/capabilities`);
+        const response = await fetch(`http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/capabilities`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }

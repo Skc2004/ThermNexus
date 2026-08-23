@@ -49,8 +49,8 @@ class Critic(nn.Module):
 class RLThermalAgent:
     def __init__(self, config):
         self.cfg = config
-        self.actor = ContinuousActor(state_dim=5, action_dim=15)
-        self.critic = Critic(state_dim=5)
+        self.actor = ContinuousActor(state_dim=7, action_dim=15)
+        self.critic = Critic(state_dim=7)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)
         
@@ -135,14 +135,19 @@ class RLThermalAgent:
         
         return cpu_pwm, case_pwm, pump_pwm, pl1_watts, gpu_watts, cpu_freq_mhz, voltage_offset_mv, per_core_freqs
 
-    def compute_reward(self, cpu_temp, gpu_temp, pwm, watts):
+    def compute_reward(self, cpu_temp, gpu_temp, pwm, watts, ssd_temp=35.0, ram_temp=40.0):
         """Reward: keep temps low, fans quiet, power efficient."""
-        # Temperature penalty (exponential above 70C)
+        # Temperature penalty (exponential above 70C for CPU, 60C for SSD)
         temp_penalty = 0.0
         if cpu_temp > 70:
-            temp_penalty = -((cpu_temp - 70) ** 2) * 0.01
+            temp_penalty += -((cpu_temp - 70) ** 2) * 0.01
         elif cpu_temp < 60:
-            temp_penalty = 0.5  # bonus for staying cool
+            temp_penalty += 0.5  # bonus for staying cool
+            
+        if ssd_temp > 60:
+            temp_penalty += -((ssd_temp - 60) ** 2) * 0.02
+        if ram_temp > 65:
+            temp_penalty += -((ram_temp - 65) ** 2) * 0.01
         
         # Fan noise penalty (prefer lower PWM)
         noise_penalty = -(pwm / 255.0) * 0.3

@@ -27,16 +27,18 @@ install: build
 	sudo cp bash_scripts/thermalnexus-start.sh $(PREFIX)/bin/
 	sudo chmod +x $(PREFIX)/bin/thermalnexus-start.sh
 	# systemd
-	sudo sed "s|INSTALL_DIR|$(PREFIX)|g" bash_scripts/thermalnexus.service | sudo tee $(SYSTEMD_DIR)/thermalnexus.service
+	sudo sed "s|INSTALL_DIR|$(PREFIX)|g" systemd/thermalnexus-core.service | sudo tee $(SYSTEMD_DIR)/thermalnexus-core.service
+	sudo sed "s|INSTALL_DIR|$(PREFIX)|g" systemd/thermalnexus-brain.service | sudo tee $(SYSTEMD_DIR)/thermalnexus-brain.service
 	sudo systemctl daemon-reload
 	# polkit
 	sudo cp linux_system/99-thermalnexus.rules $(POLKIT_DIR)/
-	@echo "Done. Run: sudo systemctl enable --now thermalnexus"
+	@echo "Done. Run: sudo systemctl enable --now thermalnexus-core thermalnexus-brain"
 
 uninstall:
-	sudo systemctl stop thermalnexus 2>/dev/null || true
-	sudo systemctl disable thermalnexus 2>/dev/null || true
-	sudo rm -f $(SYSTEMD_DIR)/thermalnexus.service
+	sudo systemctl stop thermalnexus-core thermalnexus-brain 2>/dev/null || true
+	sudo systemctl disable thermalnexus-core thermalnexus-brain 2>/dev/null || true
+	sudo rm -f $(SYSTEMD_DIR)/thermalnexus-core.service
+	sudo rm -f $(SYSTEMD_DIR)/thermalnexus-brain.service
 	sudo rm -f $(POLKIT_DIR)/99-thermalnexus.rules
 	sudo rm -rf $(PREFIX)
 	sudo systemctl daemon-reload

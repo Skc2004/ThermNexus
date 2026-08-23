@@ -5,6 +5,18 @@ import time
 import config_loader
 from diagnostic_runner import runner
 
+try:
+    import swarm_discovery
+    HAS_SWARM = True
+except ImportError:
+    HAS_SWARM = False
+
+try:
+    import cloud_telemetry
+    HAS_CLOUD = True
+except ImportError:
+    HAS_CLOUD = False
+
 app = Flask(__name__)
 cfg = config_loader.load_config()
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), cfg["paths"]["database"])
@@ -208,6 +220,31 @@ def get_processes():
         return jsonify({"status": "ok", "data": unique_procs[:20]})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/config/rgb", methods=["GET", "POST"])
+def manage_rgb():
+    cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rgb_config.json")
+    try:
+        import json
+        if request.method == "POST":
+            data = request.json if request.json else {}
+            with open(cfg_path, "w") as f:
+                json.dump(data, f)
+            return jsonify({"status": "ok", "message": "RGB config updated."})
+        else:
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r") as f:
+                    data = json.load(f)
+                return jsonify({"status": "ok", "data": data})
+            return jsonify({"status": "ok", "data": {"enabled": False}})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/cluster/nodes", methods=["GET"])
+def get_cluster_nodes():
+    if HAS_SWARM:
+        return jsonify({"status": "ok", "data": swarm_discovery.discovered_nodes})
+    return jsonify({"status": "ok", "data": {}})
 
 @app.route("/doctor/prescription", methods=["GET"])
 def get_prescription():
@@ -433,4 +470,8 @@ alert_thread = threading.Thread(target=_alert_loop, daemon=True)
 alert_thread.start()
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8889, debug=False)
+    if HAS_SWARM:
+        swarm_discovery.start_swarm()
+    if HAS_CLOUD:
+        cloud_telemetry.start_cloud_relay()
+    app.run(host="0.0.0.0", port=8889, debug=False)

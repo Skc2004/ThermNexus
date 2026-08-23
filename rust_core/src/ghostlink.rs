@@ -10,10 +10,10 @@ impl GhostLink {
     pub fn new(path: &str) -> std::io::Result<Self> {
         let file_path = Path::new(path);
         
-        // Expand to 256 bytes for per-core frequency intelligence
+        // Expand to 320 bytes for Option D hardware telemetry
         if !file_path.exists() {
             let file = std::fs::File::create(file_path)?;
-            file.set_len(256)?;
+            file.set_len(320)?;
         }
         
         let file = OpenOptions::new()
@@ -21,7 +21,7 @@ impl GhostLink {
             .write(true)
             .open(file_path)?;
 
-        let mmap = unsafe { MmapOptions::new().len(256).map_mut(&file)? };
+        let mmap = unsafe { MmapOptions::new().len(320).map_mut(&file)? };
 
         Ok(GhostLink { mmap })
     }
@@ -114,6 +114,14 @@ impl GhostLink {
         }
         freqs
     }
+
+    pub fn get_ssd_temp(&self) -> f32 {
+        self.volatile_read_f32(160)
+    }
+
+    pub fn get_ram_temp(&self) -> f32 {
+        self.volatile_read_f32(164)
+    }
 }
 
 #[cfg(test)]
@@ -137,7 +145,7 @@ mod tests {
         let _gl = GhostLink::new(path).unwrap();
         assert!(Path::new(path).exists());
         let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 256);
+        assert_eq!(meta.len(), 320);
     }
 
     #[test]

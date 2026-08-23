@@ -239,7 +239,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "gpu_temp": ghost_link.get_gpu_temp(),
                 "watts": ghost_link.get_watts(),
                 "predicted": ghost_link.get_predicted_temp(),
-                "core_temps": ghost_link.get_core_temps()
+                "core_temps": ghost_link.get_core_temps(),
+                "ssd_temp": ghost_link.get_ssd_temp(),
+                "ram_temp": ghost_link.get_ram_temp()
             });
             
             // Throttle broadcast to 10Hz to save UI rendering overload

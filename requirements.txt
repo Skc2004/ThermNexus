@@ -5,3 +5,4 @@ scikit-learn
 nvidia-ml-py
 numpy
 Flask
+openrgb-python

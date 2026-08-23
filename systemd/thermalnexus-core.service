@@ -1,0 +1,17 @@
+[Unit]
+Description=ThermalNexus Rust Core Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=INSTALL_DIR
+ExecStart=INSTALL_DIR/bin/thermalnexus-core
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=thermalnexus-core
+
+[Install]
+WantedBy=multi-user.target

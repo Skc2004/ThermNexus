@@ -54,17 +54,25 @@ export default function App() {
   const [currentPwm, setCurrentPwm] = useState(0);
   const [failsafe, setFailsafe] = useState(false);
   const [capabilities, setCapabilities] = useState({ can_control_gpu: false, can_control_dvfs: false });
+  const [swarmNodes, setSwarmNodes] = useState({'127.0.0.1': {hostname: 'Local Machine'}});
+  const [activeNode, setActiveNodeState] = useState('127.0.0.1');
+  
+  const setActiveNode = (ip) => {
+    window.ACTIVE_NODE = ip;
+    setActiveNodeState(ip);
+  };
 
   // ── Hardware Limits ──
   const [targetCpuFreq, setTargetCpuFreq] = useState(0);
   const [targetPl1, setTargetPl1] = useState(0);
   const [targetGpuWatts, setTargetGpuWatts] = useState(0);
   const [targetVoltageOffset, setTargetVoltageOffset] = useState(0);
-  const [perCoreFreqs, setPerCoreFreqs] = useState([0,0,0,0,0,0,0,0]);
+  const [perCoreFreqs, setPerCoreFreqs] = useState([0, 0, 0, 0, 0, 0, 0, 0]);
 
   const [onBattery, setOnBattery] = useState(false);
   const [acousticMode, setAcousticMode] = useState(false);
   const [cryoBoost, setCryoBoost] = useState(false);
+  const [rgbSync, setRgbSync] = useState(false);
   const [fanCurve, setFanCurve] = useState({ enabled: false, curve: [] });
 
   // ── Active Profile ──
@@ -72,22 +80,52 @@ export default function App() {
 
   useEffect(() => {
     fetchCapabilities().then(setCapabilities);
-    fetch('http://localhost:8889/config/fancurve')
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/config/fancurve')
       .then(res => res.json())
       .then(data => {
         if (data.status === 'ok') setFanCurve(data.data);
-      })
-      .catch(() => {});
+      }).catch(() => { });
+
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/config/rgb')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok') setRgbSync(data.data.enabled);
+      }).catch(() => { });
   }, []);
 
   const saveFanCurve = (newCurveConfig) => {
     setFanCurve(newCurveConfig);
-    fetch('http://localhost:8889/config/fancurve', {
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/config/fancurve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newCurveConfig)
     }).catch(console.error);
   };
+
+  const toggleRgbSync = () => {
+    const newState = !rgbSync;
+    setRgbSync(newState);
+    fetch(`http://${activeNode}:8889/config/rgb`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: newState })
+    }).catch(console.error);
+  };
+  
+  useEffect(() => {
+    // Poll for swarm nodes
+    const interval = setInterval(() => {
+      fetch(`http://127.0.0.1:8889/cluster/nodes`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') {
+             // add localhost manually
+             setSwarmNodes({ '127.0.0.1': { hostname: 'Local Machine' }, ...data.data });
+          }
+        }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ── Telemetry ──
   const [cpuTemp, setCpuTemp] = useState(0);
@@ -95,6 +133,8 @@ export default function App() {
   const [watts, setWatts] = useState(0);
   const [confidence, setConfidence] = useState(100);
   const [coreTemps, setCoreTemps] = useState([0, 0, 0, 0, 0, 0, 0, 0]);
+  const [ssdTemp, setSsdTemp] = useState(0);
+  const [ramTemp, setRamTemp] = useState(0);
   const [efficacy, setEfficacy] = useState(0);
   const [predictedTemp, setPredictedTemp] = useState(0);
   const [heartbeatAge, setHeartbeatAge] = useState(0);
@@ -129,24 +169,24 @@ export default function App() {
 
   useEffect(() => {
     const fetchProfile = () => {
-      fetch('http://localhost:8889/profile/active')
+      fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/profile/active')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') setActiveProfile(data.data);
-        }).catch(() => {});
-      
-      fetch('http://localhost:8889/system/processes')
+        }).catch(() => { });
+
+      fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/system/processes')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') setSystemProcesses(data.data);
-        }).catch(() => {});
+        }).catch(() => { });
     };
-    
-    fetch('http://localhost:8889/config/profiles')
+
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/config/profiles')
       .then(res => res.json())
       .then(data => {
         if (data.status === 'ok') setProfiles(data.data);
-      }).catch(() => {});
+      }).catch(() => { });
 
     const interval = setInterval(fetchProfile, 2000);
     fetchProfile();
@@ -155,7 +195,7 @@ export default function App() {
 
   const saveProfiles = (newProfiles) => {
     setProfiles(newProfiles);
-    fetch('http://localhost:8889/config/profiles', {
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/config/profiles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newProfiles)
@@ -164,12 +204,12 @@ export default function App() {
 
   useEffect(() => {
     const fetchContext = () => {
-      fetch('http://localhost:8889/doctor/prescription')
+      fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/doctor/prescription')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') setOnBattery(data.on_battery);
         })
-        .catch(() => {});
+        .catch(() => { });
     };
     fetchContext();
     const intv = setInterval(fetchContext, 5000);
@@ -183,7 +223,7 @@ export default function App() {
     let ws = null;
 
     function connect() {
-      ws = new WebSocket('ws://localhost:8888');
+      ws = new WebSocket('ws://${window.ACTIVE_NODE || '127.0.0.1'}:8888');
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -212,6 +252,8 @@ export default function App() {
           setWatts(p.watts ? parseFloat(p.watts.toFixed(1)) : 0);
           setPredictedTemp(p.predicted ? parseFloat(p.predicted.toFixed(1)) : 0);
           if (p.core_temps) setCoreTemps(p.core_temps);
+          if (p.ssd_temp) setSsdTemp(parseFloat(p.ssd_temp.toFixed(1)));
+          if (p.ram_temp) setRamTemp(parseFloat(p.ram_temp.toFixed(1)));
 
           if (p.target_cpu_freq !== undefined) setTargetCpuFreq(p.target_cpu_freq);
           if (p.target_pl1_watts !== undefined) setTargetPl1(p.target_pl1_watts);
@@ -377,7 +419,9 @@ export default function App() {
             targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset}
             acousticMode={acousticMode} setAcousticMode={setAcousticMode}
             cryoBoost={cryoBoost} setCryoBoost={setCryoBoost} onBattery={onBattery}
-            perCoreFreqs={perCoreFreqs}
+            perCoreFreqs={perCoreFreqs} ssdTemp={ssdTemp} ramTemp={ramTemp}
+            rgbSync={rgbSync} toggleRgbSync={toggleRgbSync}
+            swarmNodes={swarmNodes} activeNode={activeNode} setActiveNode={setActiveNode}
           />}
 
           {page === 'cpu' && <CpuPage coreTemps={coreTemps} cpuTemp={cpuTemp} gpuTemp={gpuTemp} watts={watts} data={data} isOnline={isOnline} status={status} perCoreFreqs={perCoreFreqs} />}
@@ -415,7 +459,7 @@ export default function App() {
 // ══════════════════════════════════════════════
 // ██  PAGE: DASHBOARD (main overview)
 // ══════════════════════════════════════════════
-function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset, acousticMode, setAcousticMode, cryoBoost, setCryoBoost, onBattery, perCoreFreqs }) {
+function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, currentPwm, confidence, coreTemps, avgTemp, uiLock, failsafe, efficacy, manualPwm, handleSlider, releaseOverride, engageManual, chartData, predictedTemp, heartbeatAge, capabilities, targetCpuFreq, targetPl1, targetGpuWatts, targetVoltageOffset, acousticMode, setAcousticMode, cryoBoost, setCryoBoost, onBattery, perCoreFreqs, ssdTemp, ramTemp, rgbSync, toggleRgbSync, swarmNodes, activeNode, setActiveNode }) {
   return (
     <>
       {/* Header */}
@@ -425,37 +469,57 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
             Adaptive Thermal Node
             {onBattery && <span className="bg-orange-500/20 text-orange-400 border border-orange-500/30 px-3 py-1 rounded-full text-[10px] uppercase tracking-widest flex items-center gap-2"><Zap size={10} /> Battery Saver Active</span>}
           </h1>
-          <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase mt-1.5 flex items-center gap-2">
-            <StatusDot online={isOnline} /> Hardware Link: {status}
-          </p>
+          <div className="flex items-center gap-2 mt-1.5">
+            <p className="text-[10px] font-bold tracking-[0.2em] text-white/25 uppercase flex items-center gap-2">
+              <StatusDot online={isOnline} /> Hardware Link: {status}
+            </p>
+            {Object.keys(swarmNodes).length > 1 && (
+              <select 
+                className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] uppercase font-bold tracking-widest text-white ml-4 focus:outline-none focus:border-purple-500"
+                value={activeNode}
+                onChange={e => setActiveNode(e.target.value)}
+              >
+                {Object.entries(swarmNodes).map(([ip, node]) => (
+                  <option key={ip} value={ip} className="bg-gray-900">{node.hostname} ({ip})</option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          <button 
+          <button
+            onClick={toggleRgbSync}
+            className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all ${rgbSync ? 'bg-purple-500/20 text-purple-400 border-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-white/30 border-white/10 hover:bg-white/10'
+              }`}
+          >
+            {rgbSync ? '✨ RGB Sync ON' : 'RGB Sync OFF'}
+          </button>
+          <button
             onClick={() => {
-              fetch('http://localhost:8889/action/cryoboost', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration: 30 }) })
-              .then(() => setCryoBoost(true));
+              fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/action/cryoboost', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration: 30 }) })
+                .then(() => setCryoBoost(true));
               setTimeout(() => setCryoBoost(false), 30000);
             }}
-            className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all shadow-[0_0_20px_rgba(56,189,248,0.2)] ${
-              cryoBoost ? 'bg-cyan-500 text-white border-cyan-400 animate-pulse' : 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20'
-            }`}
+            className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all shadow-[0_0_20px_rgba(56,189,248,0.2)] ${cryoBoost ? 'bg-cyan-500 text-white border-cyan-400 animate-pulse' : 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20'
+              }`}
           >
             {cryoBoost ? '❄ Purging Heat...' : '❄ Cryo-Boost'}
           </button>
-          <div className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
-            uiLock ? 'bg-orange-500/15 border-orange-500/30 text-orange-400' :
-            failsafe ? 'bg-red-500/15 border-red-500/30 text-red-400' :
-            'bg-blue-500/10 border-blue-500/20 text-blue-400'
-          }`}>
+          <div className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${uiLock ? 'bg-orange-500/15 border-orange-500/30 text-orange-400' :
+              failsafe ? 'bg-red-500/15 border-red-500/30 text-red-400' :
+                'bg-blue-500/10 border-blue-500/20 text-blue-400'
+            }`}>
             {uiLock ? '⚡ Manual' : failsafe ? '⚠ Failsafe' : '🧠 AI Active'}
           </div>
         </div>
       </header>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-6 gap-3 animate-slide-in" style={{ animationDelay: '50ms' }}>
+      <div className="grid grid-cols-8 gap-3 animate-slide-in" style={{ animationDelay: '50ms' }}>
         <StatCard icon={Thermometer} label="CPU Avg" value={cpuTemp} unit="°C" color="blue" />
         <StatCard icon={Thermometer} label="GPU" value={gpuTemp} unit="°C" color="purple" />
+        <StatCard icon={Thermometer} label="SSD" value={ssdTemp} unit="°C" color="teal" />
+        <StatCard icon={Thermometer} label="RAM" value={ramTemp} unit="°C" color="orange" />
         <StatCard icon={Zap} label="Package" value={watts} unit="W" color="orange" />
         <StatCard icon={Gauge} label="Fan Duty" value={pwmToPercent(currentPwm)} unit="%" color="teal" />
         <StatCard icon={BrainCircuit} label="AI Pred" value={predictedTemp} unit="°C" color={confidence > 70 ? 'green' : 'red'} />
@@ -471,15 +535,15 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
             <Thermometer size={11} className="text-blue-400/60" /> 3D Core Topology
             <span className="text-[7px] text-purple-400/50 ml-auto">TEMP + FREQ</span>
           </h3>
-          
+
           {/* Legend */}
           <div className="flex items-center gap-4 mb-4 text-[7px] text-white/25">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-gradient-to-r from-blue-500 to-red-500" /> Height = Temp</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-purple-500/50" /> Label = AI Freq Cap</span>
           </div>
-          
+
           <div className="flex-1 flex items-center justify-center">
-            <div 
+            <div
               className="grid grid-cols-4 gap-3 transition-all duration-[2000ms] ease-out"
               style={{
                 transform: 'perspective(1000px) rotateX(55deg) rotateZ(-45deg)',
@@ -493,10 +557,10 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
                 // Frequency color: green=full turbo, amber=throttled, red=heavily throttled
                 const freqPct = coreFreq > 0 ? Math.min(1, (coreFreq - 800) / (5500 - 800)) : 0;
                 const freqColor = freqPct > 0.7 ? 'text-emerald-400' : freqPct > 0.4 ? 'text-amber-400' : 'text-red-400';
-                
+
                 return (
-                  <div 
-                    key={i} 
+                  <div
+                    key={i}
                     className={`w-14 h-14 rounded-lg bg-gradient-to-br ${hc.bg} border border-white/[0.15] flex flex-col items-center justify-center transition-all duration-700 shadow-xl relative`}
                     style={{
                       transform: `translateZ(${zHeight}px)`,
@@ -507,12 +571,12 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
                     {/* 3D Walls */}
                     <div className="absolute top-full left-0 w-full origin-top transform rotate-x-[-90deg] bg-black/40 border border-white/5 rounded-b-lg transition-all duration-700" style={{ height: `${zHeight}px` }} />
                     <div className="absolute top-0 left-full h-full origin-left transform rotate-y-[90deg] bg-black/60 border border-white/5 rounded-r-lg transition-all duration-700" style={{ width: `${zHeight}px` }} />
-                    
+
                     <span className={`text-[10px] font-black mono ${hc.text} relative z-10 leading-none`}>{temp.toFixed(0)}°</span>
                     <span className="text-[5px] font-bold text-white/40 uppercase tracking-widest relative z-10">C{i}</span>
                     {coreFreq > 0 && (
                       <span className={`text-[6px] font-black mono ${freqColor} relative z-10 leading-none mt-0.5`}>
-                        {coreFreq > 1000 ? `${(coreFreq/1000).toFixed(1)}G` : `${coreFreq}M`}
+                        {coreFreq > 1000 ? `${(coreFreq / 1000).toFixed(1)}G` : `${coreFreq}M`}
                       </span>
                     )}
                   </div>
@@ -520,7 +584,7 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
               })}
             </div>
           </div>
-          
+
           <div className="mt-4 flex items-center justify-between text-[9px] text-white/20 relative z-20">
             <span>Avg: <span className="mono text-white/40">{avgTemp.toFixed(1)}°C</span></span>
             <span>Max: <span className="mono text-white/40">{Math.max(...coreTemps).toFixed(1)}°C</span></span>
@@ -530,7 +594,7 @@ function DashboardPage({ viewMode, isOnline, status, cpuTemp, gpuTemp, watts, cu
         {/* Control Authority & Hardware Limits */}
         <div className="col-span-4 flex flex-col gap-4">
           <ControlPanel uiLock={uiLock} manualPwm={manualPwm} handleSlider={handleSlider} releaseOverride={releaseOverride} engageManual={engageManual} confidence={confidence} currentPwm={currentPwm} acousticMode={acousticMode} setAcousticMode={setAcousticMode} />
-          
+
           <HardwareLimitsPanel capabilities={capabilities} targetCpuFreq={targetCpuFreq} targetPl1={targetPl1} targetGpuWatts={targetGpuWatts} targetVoltageOffset={targetVoltageOffset} />
         </div>
 
@@ -634,19 +698,19 @@ function CpuPage({ coreTemps, cpuTemp, gpuTemp, watts, data, isOnline, status, p
             const coreFreq = (perCoreFreqs && perCoreFreqs[i]) || 0;
             const freqPct = coreFreq > 0 ? Math.min(1, (coreFreq - 800) / (5500 - 800)) : 0;
             const freqColor = freqPct > 0.7 ? 'text-emerald-400' : freqPct > 0.4 ? 'text-amber-400' : 'text-red-400';
-            
+
             return (
               <div key={i} className={`rounded-2xl bg-gradient-to-br ${hc.bg} border border-white/[0.07] p-4 flex flex-col items-center justify-center transition-all duration-700 shadow-lg ${hc.glow} hover:border-white/15 relative overflow-hidden aspect-square`}>
                 <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-black/30 to-transparent pointer-events-none" />
                 <span className={`text-xl font-black mono ${hc.text} relative z-10`}>{temp.toFixed(1)}°</span>
                 <span className="text-[8px] font-bold text-white/30 uppercase tracking-widest relative z-10 mt-1">Core {i}</span>
-                
+
                 {coreFreq > 0 && (
                   <span className={`text-[9px] font-black mono ${freqColor} relative z-10 mt-2 bg-black/40 px-2 py-0.5 rounded border border-white/5`}>
-                    {coreFreq > 1000 ? `${(coreFreq/1000).toFixed(1)}G` : `${coreFreq}M`}
+                    {coreFreq > 1000 ? `${(coreFreq / 1000).toFixed(1)}G` : `${coreFreq}M`}
                   </span>
                 )}
-                
+
                 <div className="w-full h-1 bg-white/5 rounded-full mt-2 relative z-10 overflow-hidden">
                   <div className={`h-full rounded-full transition-all duration-500 ${temp > 75 ? 'bg-red-400' : temp > 55 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: `${clamp(temp, 0, 100)}%` }} />
                 </div>
@@ -713,8 +777,8 @@ function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, re
           <div className="mt-4 p-3 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[9px] text-white/25 block">
               {uiLock ? '⚡ You are directly controlling fan speed. AI is bypassed.' :
-               failsafe ? '⚠ Python ML heartbeat lost. BIOS is managing fans.' :
-               '🧠 AI MPC is optimizing fan speed based on thermal predictions.'}
+                failsafe ? '⚠ Python ML heartbeat lost. BIOS is managing fans.' :
+                  '🧠 AI MPC is optimizing fan speed based on thermal predictions.'}
             </span>
           </div>
         </div>
@@ -725,14 +789,14 @@ function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, re
           <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase flex items-center gap-2">
             <Activity size={11} className="text-purple-400/60" /> Custom Fan Curve Override
           </h3>
-          <button 
+          <button
             onClick={() => saveFanCurve({ ...fanCurve, enabled: !fanCurve.enabled })}
             className={`px-3 py-1 rounded-full text-[9px] font-black tracking-widest transition-all uppercase border ${fanCurve.enabled ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'bg-white/5 text-white/30 border-white/10 hover:bg-white/10'}`}
           >
             {fanCurve.enabled ? 'Enabled' : 'Disabled'}
           </button>
         </div>
-        
+
         <div className={`grid grid-cols-4 gap-4 transition-all duration-500 ${fanCurve.enabled ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
           {fanCurve.curve && fanCurve.curve.map((pt, idx) => (
             <div key={idx} className="bg-black/20 p-4 rounded-xl border border-white/5">
@@ -740,14 +804,14 @@ function CoolingPage({ currentPwm, uiLock, failsafe, manualPwm, handleSlider, re
                 <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{pt.temp}°C Node</span>
                 <span className="mono text-xs font-black text-purple-300">{pwmToPercent(pt.pwm)}%</span>
               </div>
-              <input 
-                type="range" min="0" max="255" value={pt.pwm} 
+              <input
+                type="range" min="0" max="255" value={pt.pwm}
                 onChange={(e) => {
                   const newCurve = [...fanCurve.curve];
                   newCurve[idx].pwm = parseInt(e.target.value);
                   saveFanCurve({ ...fanCurve, curve: newCurve });
                 }}
-                className="w-full accent-purple-500" 
+                className="w-full accent-purple-500"
               />
               <div className="flex justify-between text-[8px] text-white/20 font-bold mono mt-2">
                 <span>0%</span><span>100%</span>
@@ -879,37 +943,33 @@ function AlgoPage({ algoLog, uiLock, failsafe, predictedTemp, cpuTemp, confidenc
 
 function ControlPanel({ uiLock, manualPwm, handleSlider, releaseOverride, engageManual, confidence, acousticMode, setAcousticMode }) {
   return (
-    <div className={`glass-panel p-5 h-full flex flex-col transition-all duration-500 ${
-      uiLock ? 'border-orange-500/30 shadow-[0_0_30px_rgba(249,115,22,0.08)]' : 'border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.05)]'
-    }`}>
+    <div className={`glass-panel p-5 h-full flex flex-col transition-all duration-500 ${uiLock ? 'border-orange-500/30 shadow-[0_0_30px_rgba(249,115,22,0.08)]' : 'border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.05)]'
+      }`}>
       <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-4 flex items-center gap-2">
         <Shield size={11} className={uiLock ? 'text-orange-400/60' : 'text-blue-400/60'} /> Control Authority
       </h3>
 
       <div className="grid grid-cols-2 gap-2 mb-5">
         <button onClick={releaseOverride}
-          className={`py-3 px-3 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 ${
-            !uiLock ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-[0_0_16px_rgba(59,130,246,0.15)]' : 'bg-white/[0.02] text-white/20 border border-white/[0.04] hover:bg-white/[0.04]'
-          }`}>
+          className={`py-3 px-3 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 ${!uiLock ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-[0_0_16px_rgba(59,130,246,0.15)]' : 'bg-white/[0.02] text-white/20 border border-white/[0.04] hover:bg-white/[0.04]'
+            }`}>
           <BrainCircuit size={14} /> AI Control
         </button>
         <button onClick={engageManual}
-          className={`py-3 px-3 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 ${
-            uiLock ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40 shadow-[0_0_16px_rgba(249,115,22,0.15)]' : 'bg-white/[0.02] text-white/20 border border-white/[0.04] hover:bg-white/[0.04]'
-          }`}>
+          className={`py-3 px-3 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 ${uiLock ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40 shadow-[0_0_16px_rgba(249,115,22,0.15)]' : 'bg-white/[0.02] text-white/20 border border-white/[0.04] hover:bg-white/[0.04]'
+            }`}>
           <SlidersHorizontal size={14} /> Manual
         </button>
       </div>
 
       <div className="mb-5">
         <button onClick={() => {
-            const nextState = !acousticMode;
-            fetch('http://localhost:8889/config/acoustic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: nextState }) })
+          const nextState = !acousticMode;
+          fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/config/acoustic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: nextState }) })
             .then(() => setAcousticMode(nextState));
-          }}
-          className={`w-full py-2.5 rounded-xl text-[9px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 border ${
-            acousticMode ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-[0_0_16px_rgba(168,85,247,0.15)]' : 'bg-white/[0.02] text-white/20 border-white/[0.04] hover:bg-white/[0.04]'
-          }`}>
+        }}
+          className={`w-full py-2.5 rounded-xl text-[9px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-2 border ${acousticMode ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-[0_0_16px_rgba(168,85,247,0.15)]' : 'bg-white/[0.02] text-white/20 border-white/[0.04] hover:bg-white/[0.04]'
+            }`}>
           <Wind size={12} /> {acousticMode ? 'Acoustic Smoothing: ON' : 'Acoustic Smoothing: OFF'}
         </button>
       </div>
@@ -960,7 +1020,7 @@ function HardwareLimitsPanel({ capabilities, targetCpuFreq, targetPl1, targetGpu
         <Zap size={11} className="text-teal-400/60" /> Hardware AI Limits
       </h3>
       <div className="flex flex-col justify-center h-full gap-5">
-        
+
         {/* CPU Frequency */}
         {capabilities.can_control_dvfs && (
           <div className="space-y-1.5">
@@ -1050,12 +1110,11 @@ function ChartPanel({ viewMode, chartData }) {
 
 function PipelineStage({ label, detail, active, warn, highlight }) {
   return (
-    <div className={`px-4 py-3 rounded-xl border text-center min-w-[100px] transition-all ${
-      warn ? 'bg-red-500/10 border-red-500/30' :
-      highlight ? 'bg-emerald-500/10 border-emerald-500/30' :
-      active ? 'bg-blue-500/10 border-blue-500/20' :
-      'bg-white/[0.02] border-white/5 opacity-40'
-    }`}>
+    <div className={`px-4 py-3 rounded-xl border text-center min-w-[100px] transition-all ${warn ? 'bg-red-500/10 border-red-500/30' :
+        highlight ? 'bg-emerald-500/10 border-emerald-500/30' :
+          active ? 'bg-blue-500/10 border-blue-500/20' :
+            'bg-white/[0.02] border-white/5 opacity-40'
+      }`}>
       <span className={`text-[10px] font-bold block ${warn ? 'text-red-300' : highlight ? 'text-emerald-300' : active ? 'text-blue-300' : 'text-white/30'}`}>{label}</span>
       <span className="text-[8px] text-white/20 mono block mt-0.5">{detail}</span>
     </div>
@@ -1076,9 +1135,8 @@ function SidebarBtn({ icon: Icon, active, color = 'white', onClick, className = 
   };
   return (
     <button onClick={onClick} title={title}
-      className={`p-2.5 rounded-xl transition-all duration-200 ${
-        active ? activeStyles[color] || activeStyles.blue : 'text-white/15 hover:bg-white/[0.04] hover:text-white/30 border border-transparent'
-      } ${className}`}>
+      className={`p-2.5 rounded-xl transition-all duration-200 ${active ? activeStyles[color] || activeStyles.blue : 'text-white/15 hover:bg-white/[0.04] hover:text-white/30 border border-transparent'
+        } ${className}`}>
       <Icon size={20} />
     </button>
   );
@@ -1115,12 +1173,12 @@ function DiagnosticsPage({ isOnline, status }) {
   const [prescription, setPrescription] = useState("Awaiting diagnosis...");
 
   const fetchStatus = useCallback(() => {
-    fetch('http://localhost:8889/diagnostics/status')
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/diagnostics/status')
       .then(res => res.json())
       .then(data => {
         if (data.status === 'ok') setDiagState(data.data);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -1135,12 +1193,12 @@ function DiagnosticsPage({ isOnline, status }) {
 
   useEffect(() => {
     const fetchPrescription = () => {
-      fetch('http://localhost:8889/doctor/prescription')
+      fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/doctor/prescription')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') setPrescription(data.prescription);
         })
-        .catch(() => {});
+        .catch(() => { });
     };
     fetchPrescription();
     const intv = setInterval(fetchPrescription, 2000);
@@ -1148,12 +1206,12 @@ function DiagnosticsPage({ isOnline, status }) {
   }, []);
 
   const startScan = () => {
-    fetch('http://localhost:8889/diagnostics/start', { method: 'POST' })
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/diagnostics/start', { method: 'POST' })
       .then(() => fetchStatus());
   };
 
   useEffect(() => {
-    fetch('http://localhost:8889/diagnostics/history')
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/diagnostics/history')
       .then(res => res.json())
       .then(data => {
         if (data.status === 'ok') {
@@ -1164,7 +1222,7 @@ function DiagnosticsPage({ isOnline, status }) {
           setHistory(formatted);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [diagState.status]);
 
   return (
@@ -1182,7 +1240,7 @@ function DiagnosticsPage({ isOnline, status }) {
             <h2 className="text-lg font-black tracking-widest uppercase mb-1">Stressor Protocol</h2>
             <p className="text-xs text-white/40">This will lock fans and stress the CPU to 100% for 20 seconds to measure thermal dissipation.</p>
           </div>
-          <button 
+          <button
             onClick={startScan}
             disabled={diagState.status !== 'idle' && diagState.status !== 'complete' && diagState.status !== 'error'}
             className="px-6 py-3 bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed border border-orange-500/30 rounded-xl text-orange-400 font-black tracking-widest text-xs uppercase transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(249,115,22,0.15)]"
@@ -1200,7 +1258,7 @@ function DiagnosticsPage({ isOnline, status }) {
               </h3>
               <span className="mono text-[10px] font-bold text-orange-400/80">{diagState.progress}%</span>
             </div>
-            
+
             <div className="flex-1 min-h-[300px] h-full w-full relative">
               {diagState.data_points.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -1221,14 +1279,14 @@ function DiagnosticsPage({ isOnline, status }) {
           <div className="col-span-4 flex flex-col gap-5">
             <div className="glass-panel p-6 flex-1 flex flex-col justify-center">
               <h3 className="text-[9px] font-black tracking-[0.25em] text-white/25 uppercase mb-6 text-center">Medical Report</h3>
-              
+
               {diagState.status === 'complete' ? (
                 <div className="flex flex-col items-center animate-fade-in text-center">
                   <span className={`text-6xl font-black mono mb-2 ${diagState.score > 80 ? 'text-emerald-400' : diagState.score > 50 ? 'text-amber-400' : 'text-red-400'}`}>
                     {diagState.score}
                   </span>
                   <span className="text-[10px] text-white/30 tracking-[0.2em] uppercase font-bold mb-6">Thermal Health Score</span>
-                  
+
                   <div className={`p-4 rounded-xl border w-full ${diagState.score > 80 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : diagState.score > 50 ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-red-500/10 border-red-500/20 text-red-300'}`}>
                     <p className="text-xs font-bold leading-relaxed">{diagState.message}</p>
                   </div>
@@ -1288,13 +1346,13 @@ function AILabPage({ isOnline, status }) {
 
   useEffect(() => {
     const fetchMetrics = () => {
-      fetch('http://localhost:8889/ai/metrics')
+      fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/ai/metrics')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') {
             setMetrics(data.data);
             setMetricsHistory(prev => {
-              const next = [...prev, { 
+              const next = [...prev, {
                 step: data.data.steps,
                 actor: parseFloat(data.data.actor_loss?.toFixed(6) || 0),
                 critic: parseFloat(data.data.critic_loss?.toFixed(6) || 0),
@@ -1305,7 +1363,7 @@ function AILabPage({ isOnline, status }) {
             });
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     };
     fetchMetrics();
     const intv = setInterval(fetchMetrics, 1000);
@@ -1313,9 +1371,9 @@ function AILabPage({ isOnline, status }) {
   }, []);
 
   const resetBrain = () => {
-    fetch('http://localhost:8889/ai/reset', { method: 'POST' })
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/ai/reset', { method: 'POST' })
       .then(() => { setMetricsHistory([]); })
-      .catch(() => {});
+      .catch(() => { });
   };
 
   return (
@@ -1454,15 +1512,15 @@ function AlertsPage({ isOnline, status }) {
 
   useEffect(() => {
     const fetchAlerts = () => {
-      fetch('http://localhost:8889/alerts/history')
+      fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/alerts/history')
         .then(res => res.json())
         .then(data => { if (data.status === 'ok') setAlerts(data.data.reverse()); })
-        .catch(() => {});
+        .catch(() => { });
     };
-    fetch('http://localhost:8889/alerts/config')
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/alerts/config')
       .then(res => res.json())
       .then(data => { if (data.status === 'ok') setConfig(data.data); })
-      .catch(() => {});
+      .catch(() => { });
     fetchAlerts();
     const intv = setInterval(fetchAlerts, 5000);
     return () => clearInterval(intv);
@@ -1470,11 +1528,11 @@ function AlertsPage({ isOnline, status }) {
 
   const updateConfig = (newConfig) => {
     setConfig(newConfig);
-    fetch('http://localhost:8889/alerts/config', {
+    fetch('http://${window.ACTIVE_NODE || '127.0.0.1'}:8889/alerts/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newConfig)
-    }).catch(() => {});
+    }).catch(() => { });
   };
 
   return (
@@ -1515,9 +1573,8 @@ function AlertsPage({ isOnline, status }) {
               <span className="text-[10px] text-white/30">Alerts Enabled</span>
               <button
                 onClick={() => updateConfig({ ...config, enabled: !config.enabled })}
-                className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all ${
-                  config.enabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-white/[0.02] text-white/20 border-white/[0.04]'
-                }`}
+                className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all ${config.enabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-white/[0.02] text-white/20 border-white/[0.04]'
+                  }`}
               >
                 {config.enabled ? 'Active' : 'Disabled'}
               </button>
@@ -1537,17 +1594,15 @@ function AlertsPage({ isOnline, status }) {
           </h3>
           <div className="flex-1 overflow-y-auto thin-scrollbar space-y-2">
             {alerts.length > 0 ? alerts.map((alert, i) => (
-              <div key={i} className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                alert.severity === 'critical' ? 'bg-red-500/5 border-red-500/15' : 'bg-amber-500/5 border-amber-500/15'
-              }`}>
+              <div key={i} className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${alert.severity === 'critical' ? 'bg-red-500/5 border-red-500/15' : 'bg-amber-500/5 border-amber-500/15'
+                }`}>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${alert.severity === 'critical' ? 'bg-red-400 animate-pulse' : 'bg-amber-400'}`} />
                 <div className="flex-1 min-w-0">
                   <p className={`text-[11px] font-bold ${alert.severity === 'critical' ? 'text-red-300' : 'text-amber-300'}`}>{alert.message}</p>
                   <p className="text-[9px] mono text-white/20">{new Date(alert.timestamp * 1000).toLocaleString()}</p>
                 </div>
-                <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${
-                  alert.severity === 'critical' ? 'text-red-400 border-red-500/20 bg-red-500/10' : 'text-amber-400 border-amber-500/20 bg-amber-500/10'
-                }`}>{alert.severity}</span>
+                <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${alert.severity === 'critical' ? 'text-red-400 border-red-500/20 bg-red-500/10' : 'text-amber-400 border-amber-500/20 bg-amber-500/10'
+                  }`}>{alert.severity}</span>
               </div>
             )) : (
               <div className="flex-1 flex items-center justify-center text-white/10 font-black tracking-widest text-sm uppercase">
@@ -1566,7 +1621,7 @@ function AlertsPage({ isOnline, status }) {
 // ══════════════════════════════════════════════
 function ProfilePage({ isOnline, status, profiles, saveProfiles, systemProcesses, activeProfile }) {
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   const modes = [
     { id: 'default', name: 'Default', color: 'blue' },
     { id: 'silent', name: 'Acoustic / Silent', color: 'teal' },
@@ -1595,8 +1650,8 @@ function ProfilePage({ isOnline, status, profiles, saveProfiles, systemProcesses
         </p>
       </header>
 
-      <div className="grid grid-cols-12 gap-5 flex-1 min-h-0 animate-slide-in" style={{animationDelay: '50ms'}}>
-        
+      <div className="grid grid-cols-12 gap-5 flex-1 min-h-0 animate-slide-in" style={{ animationDelay: '50ms' }}>
+
         {/* Bound Apps List */}
         <div className="col-span-4 glass-panel p-6 flex flex-col min-h-0">
           <h2 className="text-[11px] font-black tracking-[0.25em] text-white/40 uppercase mb-4 flex items-center gap-2">
@@ -1617,7 +1672,7 @@ function ProfilePage({ isOnline, status, profiles, saveProfiles, systemProcesses
                       <span className={`text-xs font-black block ${isActive ? 'text-blue-300' : 'text-white/80'}`}>{appName}</span>
                       <span className={`text-[9px] uppercase tracking-widest font-bold mt-1 block text-${modeInfo.color}-400`}>{modeInfo.name}</span>
                     </div>
-                    <button 
+                    <button
                       onClick={() => handleBind(appName, 'default')}
                       className="w-6 h-6 rounded bg-red-500/10 hover:bg-red-500/30 flex items-center justify-center text-red-400 font-bold transition-all"
                     >
@@ -1636,15 +1691,15 @@ function ProfilePage({ isOnline, status, profiles, saveProfiles, systemProcesses
             <h2 className="text-[11px] font-black tracking-[0.25em] text-white/40 uppercase flex items-center gap-2">
               <Activity size={14} /> Process Browser
             </h2>
-            <input 
-              type="text" 
-              placeholder="Search processes..." 
+            <input
+              type="text"
+              placeholder="Search processes..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-xs text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50"
             />
           </div>
-          
+
           <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
             {filteredProcs.length === 0 ? (
               <div className="h-full flex items-center justify-center text-white/10 font-black tracking-widest text-xs uppercase">
@@ -1667,11 +1722,10 @@ function ProfilePage({ isOnline, status, profiles, saveProfiles, systemProcesses
                         <button
                           key={mode.id}
                           onClick={() => handleBind(proc.name, mode.id)}
-                          className={`px-2 py-1 rounded text-[9px] font-black tracking-widest uppercase border transition-all ${
-                            currentMode === mode.id 
-                              ? `bg-${mode.color}-500/20 text-${mode.color}-300 border-${mode.color}-500/30` 
+                          className={`px-2 py-1 rounded text-[9px] font-black tracking-widest uppercase border transition-all ${currentMode === mode.id
+                              ? `bg-${mode.color}-500/20 text-${mode.color}-300 border-${mode.color}-500/30`
                               : 'bg-transparent text-white/20 border-transparent hover:bg-white/5'
-                          }`}
+                            }`}
                         >
                           {mode.name}
                         </button>
